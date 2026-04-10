@@ -13,6 +13,7 @@ import {
   ConfidenceLevel,
   ClubType,
 } from '@/lib/types';
+import { CHEW } from '@/lib/config';
 
 // --- C.H.E.W. Adjustment Functions ---
 
@@ -22,8 +23,8 @@ import {
  * Cold air is denser = less carry
  */
 export function heatAdjustment(temperatureF: number, baseDistance: number): number {
-  const baseline = 70; // °F
-  const yardsPerTenDegrees = 1.5;
+  const baseline = CHEW.baselineTemperatureF;
+  const yardsPerTenDegrees = CHEW.yardsPerTenDegrees;
   const tempDiff = temperatureF - baseline;
   const adjustment = (tempDiff / 10) * yardsPerTenDegrees;
   // Return the yards to ADD to the required distance (negative = ball goes shorter, need more club)
@@ -38,7 +39,7 @@ export function heatAdjustment(temperatureF: number, baseDistance: number): numb
  * Thinner air = less drag = more carry
  */
 export function elevationAdjustment(altitudeFeet: number, baseDistance: number): number {
-  const adjustmentPercent = (altitudeFeet / 1000) * 0.02;
+  const adjustmentPercent = (altitudeFeet / 1000) * CHEW.elevationAdjustPerThousandFeet;
   // At altitude, ball goes FURTHER, so we need LESS club → negative adjustment to target
   return -(baseDistance * adjustmentPercent);
 }
@@ -67,24 +68,23 @@ export function windAdjustment(
   if (headwindComponent > 0) {
     // Headwind: roughly 1% distance loss per 1 mph of headwind component
     // 10 mph headwind on 150 yard shot = ~15 yards more needed
-    distanceAdjustment = headwindComponent * (baseDistance / 100);
+    distanceAdjustment = headwindComponent * (baseDistance * CHEW.headwindFactorPerMph);
   } else {
-    // Tailwind: roughly 0.5% distance gain per 1 mph (less effect than headwind)
-    distanceAdjustment = headwindComponent * (baseDistance / 200);
+    distanceAdjustment = headwindComponent * (baseDistance * CHEW.tailwindFactorPerMph);
   }
 
   // Crosswind description for caddie advice
   let crosswindEffect = 'minimal crosswind';
   const absXWind = Math.abs(crosswindComponent);
-  if (absXWind > 15) {
+  if (absXWind > CHEW.crosswind.strong) {
     crosswindEffect = crosswindComponent > 0
       ? 'strong wind left-to-right — aim well left'
       : 'strong wind right-to-left — aim well right';
-  } else if (absXWind > 8) {
+  } else if (absXWind > CHEW.crosswind.moderate) {
     crosswindEffect = crosswindComponent > 0
       ? 'moderate wind left-to-right — aim a bit left'
       : 'moderate wind right-to-left — aim a bit right';
-  } else if (absXWind > 3) {
+  } else if (absXWind > CHEW.crosswind.light) {
     crosswindEffect = crosswindComponent > 0
       ? 'light breeze left-to-right'
       : 'light breeze right-to-left';
@@ -201,17 +201,17 @@ export function chewRecommend(input: CHEWInput): CHEWResult {
     switch (lie.toLowerCase()) {
       case 'rough':
       case 'deep rough':
-        lieAdj = targetDistance * 0.05; // 5% less distance from rough — need more club
+        lieAdj = targetDistance * CHEW.roughPenalty;
         break;
       case 'bunker':
       case 'fairway bunker':
-        lieAdj = targetDistance * 0.08; // 8% less distance from sand
+        lieAdj = targetDistance * CHEW.bunkerPenalty;
         break;
       case 'uphill':
-        lieAdj = targetDistance * 0.05;
+        lieAdj = targetDistance * CHEW.hillAdjustment;
         break;
       case 'downhill':
-        lieAdj = -(targetDistance * 0.05);
+        lieAdj = -(targetDistance * CHEW.hillAdjustment);
         break;
       default:
         lieAdj = 0;
@@ -251,7 +251,7 @@ function selectClub(
 
   if (!clubs.length) {
     return {
-      club: '7i',
+      club: CHEW.defaultClub,
       adjustedDistance,
       targetDescription: 'center of green',
       reasoning: 'No club data in profile — defaulting to 7-iron. Add your clubs for better recommendations.',
@@ -280,7 +280,7 @@ function selectClub(
   }
 
   // If best club falls short, bump up to next club (better to be pin-high than short)
-  if (bestClub && bestDiff < -5) {
+  if (bestClub && bestDiff < -CHEW.shortThreshold) {
     const idx = sorted.indexOf(bestClub);
     if (idx < sorted.length - 1) {
       altClub = bestClub;
@@ -296,7 +296,7 @@ function selectClub(
   if (bestClub && bestClub.confidence === 'low' && altClub && altClub.confidence !== 'low') {
     // Swap to the club they're more confident with if it's close enough
     const altDiff = Math.abs(altClub.avgDistance - adjustedDistance);
-    if (altDiff < 10) {
+    if (altDiff < CHEW.confidenceSwapRange) {
       const temp = bestClub;
       bestClub = altClub;
       altClub = temp;
@@ -305,7 +305,7 @@ function selectClub(
     }
   }
 
-  const clubName = formatClubName(bestClub?.clubType || '7i');
+  const clubName = formatClubName(bestClub?.clubType || CHEW.defaultClub);
   const altClubName = altClub ? formatClubName(altClub.clubType) : undefined;
 
   return {

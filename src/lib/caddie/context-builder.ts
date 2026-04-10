@@ -5,6 +5,7 @@
 // This is what makes the caddie SMART — it knows your game, the course,
 // the weather, and the situation on every shot.
 
+import { AI_CONFIG } from '@/lib/config';
 import {
   CaddieContext,
   CaddieMode,
@@ -279,7 +280,7 @@ export function buildMessages(
 
   // Include conversation history + new message
   const messages = [
-    ...context.conversationHistory.slice(-10), // last 10 messages for context
+    ...context.conversationHistory.slice(-AI_CONFIG.conversationHistoryLimit),
     { role: 'user' as const, content: userMessage },
   ];
 

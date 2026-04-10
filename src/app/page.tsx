@@ -1,50 +1,20 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { GolferProfile, CaddiePersonality, ClubInBag } from '@/lib/types';
-
-// --- Demo golfer profile for testing ---
-const DEMO_PROFILE: GolferProfile = {
-  name: 'Mike',
-  handicap: 15,
-  age: 58,
-  gender: 'male',
-  shotShape: 'fade',
-  missTendency: 'right',
-  driverDistance: 230,
-  strengths: 'Solid short game, good course management',
-  weaknesses: 'Inconsistent driver, tendency to overthink',
-  mentalNotes: 'Plays best when relaxed and not grinding on mechanics',
-  playingStyle: 'Smart, strategic player who prefers safe plays over hero shots',
-  clubs: [
-    { clubType: 'driver', avgDistance: 230, maxDistance: 255, confidence: 'medium', notes: 'Tends to fade, occasional slice under pressure' },
-    { clubType: '3w', avgDistance: 210, maxDistance: 230, confidence: 'medium' },
-    { clubType: '5w', avgDistance: 195, maxDistance: 210, confidence: 'high' },
-    { clubType: '4h', avgDistance: 180, maxDistance: 195, confidence: 'high' },
-    { clubType: '5i', avgDistance: 165, maxDistance: 180, confidence: 'medium' },
-    { clubType: '6i', avgDistance: 155, maxDistance: 168, confidence: 'high' },
-    { clubType: '7i', avgDistance: 145, maxDistance: 158, confidence: 'high' },
-    { clubType: '8i', avgDistance: 135, maxDistance: 148, confidence: 'high' },
-    { clubType: '9i', avgDistance: 125, maxDistance: 138, confidence: 'high' },
-    { clubType: 'pw', avgDistance: 115, maxDistance: 128, confidence: 'high' },
-    { clubType: 'gw', avgDistance: 100, maxDistance: 115, confidence: 'high' },
-    { clubType: 'sw', avgDistance: 85, maxDistance: 100, confidence: 'high' },
-    { clubType: 'lw', avgDistance: 65, maxDistance: 80, confidence: 'medium' },
-    { clubType: 'putter', avgDistance: 0, maxDistance: 0, confidence: 'high' },
-  ] as ClubInBag[],
-};
+import { CaddiePersonality, CourseData, HoleData } from '@/lib/types';
+import { DEMO_PROFILE, PERSONALITY_OPTIONS, SUGGESTED_PROMPTS, UI_MESSAGES, API_SETTINGS } from '@/lib/config';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
 }
 
-const PERSONALITY_OPTIONS: { value: CaddiePersonality; label: string; emoji: string }[] = [
-  { value: 'zen_guru', label: 'Zen Guru', emoji: '🧘' },
-  { value: 'old_sage', label: 'Old Sage', emoji: '🎩' },
-  { value: 'tough_love', label: 'Tough Love', emoji: '💪' },
-  { value: 'comforting_friend', label: 'Comforting Friend', emoji: '🤗' },
-];
+interface CourseSearchResult {
+  id: string;
+  name: string;
+  city?: string;
+  state?: string;
+}
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -54,6 +24,14 @@ export default function Home() {
   const [mode, setMode] = useState<'chat' | 'voice'>('chat');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Course state
+  const [courseSearch, setCourseSearch] = useState('');
+  const [courseResults, setCourseResults] = useState<CourseSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedCourse, setSelectedCourse] = useState<CourseData | null>(null);
+  const [currentHole, setCurrentHole] = useState(1);
+  const [showCoursePanel, setShowCoursePanel] = useState(false);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -61,6 +39,58 @@ export default function Home() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Debounced course search
+  useEffect(() => {
+    if (courseSearch.length < API_SETTINGS.courseSearchMinLength) {
+      setCourseResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const res = await fetch(`/api/course/search?q=${encodeURIComponent(courseSearch)}`);
+        const data = await res.json();
+        setCourseResults(data.courses || []);
+      } catch {
+        setCourseResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, API_SETTINGS.courseSearchDebounceMs);
+    return () => clearTimeout(timer);
+  }, [courseSearch]);
+
+  const selectCourse = async (courseId: string) => {
+    try {
+      const res = await fetch(`/api/course/${courseId}`);
+      const data = await res.json();
+      if (data.course) {
+        setSelectedCourse(data.course);
+        setCurrentHole(1);
+        setCourseSearch('');
+        setCourseResults([]);
+        setShowCoursePanel(false);
+
+        // Auto-announce to the caddie
+        const holeName = data.course.holes?.[0];
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Loaded ${data.course.name}${data.course.city ? ` in ${data.course.city}${data.course.state ? ', ' + data.course.state : ''}` : ''}. ${data.course.holes?.length || 0} holes ready. You're on hole 1 — par ${holeName?.par || 4}, ${holeName?.yardage || '???'} yards. What do you need?`,
+        }]);
+      }
+    } catch {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: UI_MESSAGES.courseLoadError,
+      }]);
+    }
+  };
+
+  const getCurrentHoleData = (): HoleData | null => {
+    if (!selectedCourse) return null;
+    return selectedCourse.holes.find(h => h.holeNumber === currentHole) || null;
+  };
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +100,8 @@ export default function Home() {
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setIsLoading(true);
+
+    const holeData = getCurrentHoleData();
 
     try {
       const response = await fetch('/api/caddie/chat', {
@@ -81,6 +113,15 @@ export default function Home() {
           mode,
           personality,
           conversationHistory: messages.slice(-10),
+          currentHole: holeData,
+          round: selectedCourse ? {
+            courseData: selectedCourse,
+            currentHole,
+            teeBox: 'white',
+            scores: [],
+            shotNumber: 1,
+            lie: 'tee',
+          } : null,
         }),
       });
 
@@ -89,7 +130,7 @@ export default function Home() {
       if (data.error) {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: 'Having trouble connecting. Check your API key in .env.local and restart the dev server.',
+          content: UI_MESSAGES.connectionError,
         }]);
       } else {
         setMessages(prev => [...prev, {
@@ -107,6 +148,8 @@ export default function Home() {
     }
   };
 
+  const holeData = getCurrentHoleData();
+
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
       {/* Header */}
@@ -117,7 +160,19 @@ export default function Home() {
             <p className="text-sm text-gray-400">Your AI golf caddie</p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Course Button */}
+            <button
+              onClick={() => setShowCoursePanel(!showCoursePanel)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                selectedCourse
+                  ? 'bg-green-800 text-green-200 border border-green-600'
+                  : 'bg-gray-800 text-gray-300 border border-gray-700 hover:border-green-600'
+              }`}
+            >
+              {selectedCourse ? `⛳ ${selectedCourse.name.substring(0, 20)}` : `⛳ ${UI_MESSAGES.selectCourse}`}
+            </button>
+
             {/* Personality Picker */}
             <select
               value={personality}
@@ -140,10 +195,142 @@ export default function Home() {
                   : 'bg-gray-800 text-gray-300 border border-gray-700'
               }`}
             >
-              {mode === 'voice' ? '🎤 Voice Mode' : '💬 Chat Mode'}
+              {mode === 'voice' ? '🎤 Voice' : '💬 Chat'}
             </button>
           </div>
         </div>
+
+        {/* Course Panel */}
+        {showCoursePanel && (
+          <div className="max-w-3xl mx-auto mt-3 bg-gray-900 rounded-xl border border-gray-700 p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <input
+                type="text"
+                value={courseSearch}
+                onChange={(e) => setCourseSearch(e.target.value)}
+                placeholder="Search for a golf course..."
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
+                autoFocus
+              />
+              {isSearching && (
+                <div className="text-xs text-gray-400">Searching...</div>
+              )}
+            </div>
+
+            {/* Search Results */}
+            {courseResults.length > 0 && (
+              <div className="space-y-1 max-h-48 overflow-y-auto mb-3">
+                {courseResults.slice(0, API_SETTINGS.courseSearchMaxResults).map(course => (
+                  <button
+                    key={course.id}
+                    onClick={() => selectCourse(course.id)}
+                    className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-gray-800 transition-colors"
+                  >
+                    <span className="text-gray-200">{course.name}</span>
+                    {(course.city || course.state) && (
+                      <span className="text-gray-500 ml-2">
+                        {[course.city, course.state].filter(Boolean).join(', ')}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Hole Selector (when course is loaded) */}
+            {selectedCourse && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-gray-400">
+                    {selectedCourse.name}
+                    {selectedCourse.courseRating && ` · Rating: ${selectedCourse.courseRating}`}
+                    {selectedCourse.slopeRating && ` / Slope: ${selectedCourse.slopeRating}`}
+                  </span>
+                  <button
+                    onClick={() => { setSelectedCourse(null); setCourseSearch(''); }}
+                    className="text-xs text-gray-500 hover:text-gray-300"
+                  >
+                    Change course
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {selectedCourse.holes.map(hole => (
+                    <button
+                      key={hole.holeNumber}
+                      onClick={() => {
+                        setCurrentHole(hole.holeNumber);
+                        setShowCoursePanel(false);
+                        setMessages(prev => [...prev, {
+                          role: 'assistant',
+                          content: `Hole ${hole.holeNumber} — par ${hole.par}, ${hole.yardage} yards.${hole.strokeIndex ? ` Stroke index ${hole.strokeIndex}.` : ''} What do you need?`,
+                        }]);
+                      }}
+                      className={`w-10 h-10 rounded-lg text-sm font-medium transition-colors ${
+                        hole.holeNumber === currentHole
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                      }`}
+                    >
+                      {hole.holeNumber}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Active Hole Bar */}
+        {selectedCourse && holeData && !showCoursePanel && (
+          <div className="max-w-3xl mx-auto mt-2 flex items-center gap-4 text-sm">
+            <button
+              onClick={() => {
+                if (currentHole > 1) {
+                  const newHole = currentHole - 1;
+                  setCurrentHole(newHole);
+                  const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
+                  if (h) {
+                    setMessages(prev => [...prev, {
+                      role: 'assistant',
+                      content: `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. Let's go.`,
+                    }]);
+                  }
+                }
+              }}
+              disabled={currentHole <= 1}
+              className="text-gray-500 hover:text-green-400 disabled:opacity-30"
+            >
+              ‹ Prev
+            </button>
+            <div className="flex items-center gap-3 text-gray-300">
+              <span className="text-green-400 font-bold">Hole {currentHole}</span>
+              <span>Par {holeData.par}</span>
+              <span>{holeData.yardage} yds</span>
+              {holeData.strokeIndex && (
+                <span className="text-gray-500">SI {holeData.strokeIndex}</span>
+              )}
+            </div>
+            <button
+              onClick={() => {
+                if (currentHole < selectedCourse.holes.length) {
+                  const newHole = currentHole + 1;
+                  setCurrentHole(newHole);
+                  const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
+                  if (h) {
+                    setMessages(prev => [...prev, {
+                      role: 'assistant',
+                      content: `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. What do you need?`,
+                    }]);
+                  }
+                }
+              }}
+              disabled={currentHole >= selectedCourse.holes.length}
+              className="text-gray-500 hover:text-green-400 disabled:opacity-30"
+            >
+              Next ›
+            </button>
+          </div>
+        )}
       </header>
 
       {/* Messages */}
@@ -153,23 +340,19 @@ export default function Home() {
             <div className="text-center py-20">
               <div className="text-6xl mb-4">⛳</div>
               <h2 className="text-xl font-semibold text-gray-300 mb-2">
-                Welcome to mAI Caddy
+                {UI_MESSAGES.welcomeTitle}
               </h2>
-              <p className="text-gray-500 mb-8">
-                Ask me anything about your game, course strategy, or club selection.
+              <p className="text-gray-500 mb-4">
+                {UI_MESSAGES.welcomeSubtitle}
+              </p>
+              <p className="text-gray-600 text-sm mb-8">
+                {UI_MESSAGES.welcomeHint}
               </p>
               <div className="flex flex-wrap justify-center gap-2">
-                {[
-                  "What club for 155 yards into the wind?",
-                  "I keep slicing my driver. Help.",
-                  "Give me a pre-round warm-up routine",
-                  "How do I manage a dogleg right?",
-                ].map((suggestion) => (
+                {SUGGESTED_PROMPTS.map((suggestion) => (
                   <button
                     key={suggestion}
-                    onClick={() => {
-                      setInput(suggestion);
-                    }}
+                    onClick={() => setInput(suggestion)}
                     className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-full text-sm text-gray-300 hover:bg-gray-700 hover:border-green-600 transition-colors"
                   >
                     {suggestion}
@@ -227,9 +410,12 @@ export default function Home() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={mode === 'voice'
-              ? "Ask your caddie (voice mode: short answers)..."
-              : "Ask your caddie anything..."
+            placeholder={
+              selectedCourse
+                ? `Ask about hole ${currentHole} at ${selectedCourse.name}...`
+                : mode === 'voice'
+                  ? "Ask your caddie (voice mode: short answers)..."
+                  : "Ask your caddie anything..."
             }
             className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500 transition-colors"
             disabled={isLoading}
@@ -243,7 +429,9 @@ export default function Home() {
           </button>
         </form>
         <p className="text-center text-xs text-gray-600 mt-2">
-          Playing as {DEMO_PROFILE.name} · {DEMO_PROFILE.handicap} handicap · {personality.replace('_', ' ')} mode
+          Playing as {DEMO_PROFILE.name} · {DEMO_PROFILE.handicap} handicap
+          {selectedCourse && ` · ${selectedCourse.name} · Hole ${currentHole}`}
+          {' · '}{personality.replace('_', ' ')}
         </p>
       </footer>
     </div>

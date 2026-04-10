@@ -5,7 +5,8 @@
 // It assembles context, calls Claude, and returns the response.
 
 import Anthropic from '@anthropic-ai/sdk';
-import { CaddieContext, CaddieMode } from '@/lib/types';
+import { CaddieContext } from '@/lib/types';
+import { AI_CONFIG } from '@/lib/config';
 import { buildMessages } from './context-builder';
 
 const anthropic = new Anthropic({
@@ -27,20 +28,20 @@ export async function askCaddie(
 ): Promise<CaddieResponse> {
   const { system, messages } = buildMessages(context, userMessage);
 
-  // Voice mode: shorter, faster responses
-  // Chat mode: more detailed, richer responses
-  const maxTokens = context.mode === 'voice' ? 150 : 500;
+  const maxTokens = context.mode === 'voice'
+    ? AI_CONFIG.voiceMaxTokens
+    : AI_CONFIG.chatMaxTokens;
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: AI_CONFIG.model,
       max_tokens: maxTokens,
       system,
       messages,
     });
 
     const textContent = response.content.find(block => block.type === 'text');
-    const message = textContent?.text || 'I\'m here. What do you need?';
+    const message = textContent?.text || "I'm here. What do you need?";
 
     return {
       message,
@@ -50,17 +51,16 @@ export async function askCaddie(
   } catch (error: any) {
     console.error('Caddie AI error:', error);
 
-    // Graceful fallback
     if (error?.status === 429) {
       return {
-        message: 'Taking a breath here — give me a moment and ask again.',
+        message: AI_CONFIG.fallbackMessages.rateLimit,
         tokensUsed: 0,
         model: 'fallback',
       };
     }
 
     return {
-      message: 'Lost my train of thought for a second. Try me again.',
+      message: AI_CONFIG.fallbackMessages.generalError,
       tokensUsed: 0,
       model: 'fallback',
     };
@@ -77,13 +77,12 @@ export async function quickRecommendation(
   const distance = context.round?.distanceToGreen;
   if (!distance) {
     return {
-      message: 'I need to know your distance. What are you looking at?',
+      message: AI_CONFIG.fallbackMessages.noDistance,
       tokensUsed: 0,
       model: 'local',
     };
   }
 
-  // For quick recs, force voice mode for short responses
   const voiceContext: CaddieContext = { ...context, mode: 'voice' };
   return askCaddie(voiceContext, `What club should I hit? I'm ${distance} yards out.`);
 }
