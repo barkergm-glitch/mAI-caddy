@@ -96,18 +96,39 @@ export default function Home() {
     }
   }, []);
 
+  // Ref to hold speak function — breaks circular dependency between handleTranscript and voice hook
+  const speakRef = useRef<((text: string) => Promise<void>) | undefined>(undefined);
+
   // Voice hook — auto-sends transcript and speaks the response
   const handleTranscript = useCallback(async (text: string) => {
     if (modeRef.current !== 'voice') return;
     const reply = await sendToAPI(text);
-    if (reply) {
-      voice.speak(reply);
+    if (reply && speakRef.current) {
+      speakRef.current(reply);
     }
   }, [sendToAPI]);
 
   const voice = useVoice({
     onTranscript: handleTranscript,
   });
+
+  // Keep speak ref in sync
+  useEffect(() => {
+    speakRef.current = voice.speak;
+  }, [voice.speak]);
+
+  // iOS Safari requires a user-gesture-triggered utterance to "warm up" speechSynthesis.
+  // Fire a silent utterance on the first mic tap so subsequent speak() calls work reliably.
+  const ttsWarmedUp = useRef(false);
+  const warmUpTTS = useCallback(() => {
+    if (ttsWarmedUp.current) return;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const silent = new SpeechSynthesisUtterance('');
+      silent.volume = 0;
+      window.speechSynthesis.speak(silent);
+      ttsWarmedUp.current = true;
+    }
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -184,7 +205,7 @@ export default function Home() {
   const toggleMode = () => {
     if (mode === 'chat') {
       setMode('voice');
-      // Small delay to let state settle before starting recognition
+      warmUpTTS(); // Ensure iOS Safari TTS is unlocked on this user gesture
       setTimeout(() => voice.startListening(), 300);
     } else {
       setMode('chat');
@@ -206,45 +227,16 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+    <div className="h-screen bg-gray-950 text-white flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-4">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-green-400">mAI Caddy</h1>
-            <p className="text-sm text-gray-400">Your AI golf caddie</p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Course Button */}
-            <button
-              onClick={() => setShowCoursePanel(!showCoursePanel)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                selectedCourse
-                  ? 'bg-green-800 text-green-200 border border-green-600'
-                  : 'bg-gray-800 text-gray-300 border border-gray-700 hover:border-green-600'
-              }`}
-            >
-              {selectedCourse ? `⛳ ${selectedCourse.name.substring(0, 20)}` : `⛳ ${UI_MESSAGES.selectCourse}`}
-            </button>
-
-            {/* Personality Picker */}
-            <select
-              value={personality}
-              onChange={(e) => setPersonality(e.target.value as CaddiePersonality)}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-green-500"
-            >
-              {PERSONALITY_OPTIONS.map(p => (
-                <option key={p.value} value={p.value}>
-                  {p.emoji} {p.label}
-                </option>
-              ))}
-            </select>
-
-            {/* Mode Toggle */}
+      <header className="shrink-0 border-b border-gray-800 px-4 py-3 sm:px-6 sm:py-4">
+        <div className="max-w-3xl mx-auto">
+          {/* Top row: logo + mode toggle */}
+          <div className="flex items-center justify-between mb-2">
+            <h1 className="text-xl sm:text-2xl font-bold text-green-400">mAI Caddy</h1>
             <button
               onClick={toggleMode}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 mode === 'voice'
                   ? 'bg-green-600 text-white ring-2 ring-green-400 ring-opacity-50'
                   : 'bg-gray-800 text-gray-300 border border-gray-700'
@@ -253,12 +245,40 @@ export default function Home() {
               {mode === 'voice' ? '🎤 Voice' : '💬 Chat'}
             </button>
           </div>
+
+          {/* Controls row: course + personality — wraps on mobile */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Course Button */}
+            <button
+              onClick={() => setShowCoursePanel(!showCoursePanel)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+                selectedCourse
+                  ? 'bg-green-800 text-green-200 border border-green-600'
+                  : 'bg-gray-800 text-gray-300 border border-gray-700 hover:border-green-600'
+              }`}
+            >
+              {selectedCourse ? `⛳ ${selectedCourse.name.substring(0, 15)}` : `⛳ ${UI_MESSAGES.selectCourse}`}
+            </button>
+
+            {/* Personality Picker */}
+            <select
+              value={personality}
+              onChange={(e) => setPersonality(e.target.value as CaddiePersonality)}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs sm:text-sm text-gray-200 focus:outline-none focus:border-green-500"
+            >
+              {PERSONALITY_OPTIONS.map(p => (
+                <option key={p.value} value={p.value}>
+                  {p.emoji} {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Course Panel */}
         {showCoursePanel && (
-          <div className="max-w-3xl mx-auto mt-3 bg-gray-900 rounded-xl border border-gray-700 p-4">
-            <div className="flex items-center gap-3 mb-3">
+          <div className="max-w-3xl mx-auto mt-2 bg-gray-900 rounded-xl border border-gray-700 p-3 sm:p-4">
+            <div className="flex items-center gap-2 mb-2">
               <input
                 type="text"
                 value={courseSearch}
@@ -384,11 +404,11 @@ export default function Home() {
       </header>
 
       {/* Messages */}
-      <main className="flex-1 overflow-y-auto px-6 py-4">
-        <div className="max-w-3xl mx-auto space-y-4">
+      <main className="flex-1 min-h-0 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4">
+        <div className="max-w-3xl mx-auto space-y-3 sm:space-y-4">
           {messages.length === 0 && (
-            <div className="text-center py-20">
-              <div className="text-6xl mb-4">⛳</div>
+            <div className="text-center py-12 sm:py-20">
+              <div className="text-5xl sm:text-6xl mb-3">⛳</div>
               <h2 className="text-xl font-semibold text-gray-300 mb-2">
                 {UI_MESSAGES.welcomeTitle}
               </h2>
@@ -473,44 +493,46 @@ export default function Home() {
       </main>
 
       {/* Input — changes based on mode */}
-      <footer className="border-t border-gray-800 px-6 py-4">
+      <footer className="shrink-0 border-t border-gray-800 px-4 py-3 sm:px-6 sm:py-4 safe-bottom">
         {mode === 'voice' ? (
           /* Voice Mode Input */
-          <div className="max-w-3xl mx-auto flex flex-col items-center gap-3">
-            {/* Big mic button */}
-            <button
-              onClick={() => {
-                if (voice.isSpeaking) {
-                  voice.stopSpeaking();
-                } else if (voice.isListening) {
-                  voice.stopListening();
-                } else if (!isLoading) {
-                  voice.startListening();
-                }
-              }}
-              disabled={isLoading}
-              className={`w-20 h-20 rounded-full flex items-center justify-center text-3xl transition-all duration-200 ${
-                voice.isListening
-                  ? 'bg-red-500 hover:bg-red-400 scale-110 animate-pulse'
-                  : voice.isSpeaking
-                    ? 'bg-green-500 hover:bg-green-400 scale-105'
-                    : isLoading
-                      ? 'bg-gray-700 text-gray-500'
-                      : 'bg-green-600 hover:bg-green-500 hover:scale-105'
-              }`}
-            >
-              {voice.isListening ? '🔴' : voice.isSpeaking ? '🔊' : isLoading ? '⏳' : '🎤'}
-            </button>
+          <div className="max-w-3xl mx-auto flex flex-col items-center gap-2">
+            {/* Mic button + status in a row */}
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => {
+                  warmUpTTS();
+                  if (voice.isSpeaking) {
+                    voice.stopSpeaking();
+                  } else if (voice.isListening) {
+                    voice.stopListening();
+                  } else if (!isLoading) {
+                    voice.startListening();
+                  }
+                }}
+                disabled={isLoading}
+                className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-2xl sm:text-3xl transition-all duration-200 ${
+                  voice.isListening
+                    ? 'bg-red-500 hover:bg-red-400 scale-110 animate-pulse'
+                    : voice.isSpeaking
+                      ? 'bg-green-500 hover:bg-green-400 scale-105'
+                      : isLoading
+                        ? 'bg-gray-700 text-gray-500'
+                        : 'bg-green-600 hover:bg-green-500 hover:scale-105'
+                }`}
+              >
+                {voice.isListening ? '🔴' : voice.isSpeaking ? '🔊' : isLoading ? '⏳' : '🎤'}
+              </button>
 
-            {/* Voice status */}
-            <p className={`text-sm ${
-              voice.isListening ? 'text-red-400' :
-              voice.isSpeaking ? 'text-green-400' :
-              voice.error ? 'text-yellow-400' :
-              'text-gray-500'
-            }`}>
-              {isLoading ? 'Caddy is thinking...' : getVoiceStatusText()}
-            </p>
+              <p className={`text-sm ${
+                voice.isListening ? 'text-red-400' :
+                voice.isSpeaking ? 'text-green-400' :
+                voice.error ? 'text-yellow-400' :
+                'text-gray-500'
+              }`}>
+                {isLoading ? 'Caddy is thinking...' : getVoiceStatusText()}
+              </p>
+            </div>
 
             {/* Error display */}
             {voice.error && (
@@ -520,19 +542,19 @@ export default function Home() {
             )}
 
             {/* Fallback text input in voice mode */}
-            <form onSubmit={sendMessage} className="w-full flex gap-3">
+            <form onSubmit={sendMessage} className="w-full flex gap-2">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Or type here..."
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-green-500 transition-colors"
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-green-500 transition-colors"
                 disabled={isLoading}
               />
               <button
                 type="submit"
                 disabled={isLoading || !input.trim()}
-                className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors"
               >
                 Send
               </button>
@@ -540,33 +562,32 @@ export default function Home() {
           </div>
         ) : (
           /* Chat Mode Input */
-          <form onSubmit={sendMessage} className="max-w-3xl mx-auto flex gap-3">
+          <form onSubmit={sendMessage} className="max-w-3xl mx-auto flex gap-2 sm:gap-3">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={
                 selectedCourse
-                  ? `Ask about hole ${currentHole} at ${selectedCourse.name}...`
+                  ? `Ask about hole ${currentHole}...`
                   : "Ask your caddie anything..."
               }
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500 transition-colors"
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500 transition-colors"
               disabled={isLoading}
             />
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-6 py-3 rounded-xl font-medium transition-colors"
+              className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-4 py-2.5 sm:px-6 sm:py-3 rounded-xl font-medium text-sm transition-colors"
             >
               Send
             </button>
           </form>
         )}
-        <p className="text-center text-xs text-gray-600 mt-2">
-          Playing as {DEMO_PROFILE.name} · {DEMO_PROFILE.handicap} handicap
-          {selectedCourse && ` · ${selectedCourse.name} · Hole ${currentHole}`}
+        <p className="text-center text-xs text-gray-600 mt-1.5">
+          {DEMO_PROFILE.name} · {DEMO_PROFILE.handicap} hcp
+          {selectedCourse && ` · Hole ${currentHole}`}
           {' · '}{personality.replace('_', ' ')}
-          {mode === 'voice' && ' · 🎤 voice mode'}
         </p>
       </footer>
     </div>
