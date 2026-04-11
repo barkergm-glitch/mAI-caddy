@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { CaddiePersonality, CourseData, HoleData } from '@/lib/types';
 import { DEMO_PROFILE, PERSONALITY_OPTIONS, SUGGESTED_PROMPTS, UI_MESSAGES, API_SETTINGS } from '@/lib/config';
+import { useVoice } from '@/lib/hooks/use-voice';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -31,6 +32,82 @@ export default function Home() {
   const [selectedCourse, setSelectedCourse] = useState<CourseData | null>(null);
   const [currentHole, setCurrentHole] = useState(1);
   const [showCoursePanel, setShowCoursePanel] = useState(false);
+
+  // Refs to access latest state in voice callbacks
+  const messagesRef = useRef<Message[]>([]);
+  const modeRef = useRef(mode);
+  const personalityRef = useRef(personality);
+  const selectedCourseRef = useRef(selectedCourse);
+  const currentHoleRef = useRef(currentHole);
+  const isLoadingRef = useRef(false);
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { personalityRef.current = personality; }, [personality]);
+  useEffect(() => { selectedCourseRef.current = selectedCourse; }, [selectedCourse]);
+  useEffect(() => { currentHoleRef.current = currentHole; }, [currentHole]);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+
+  // Core send logic (shared by text and voice)
+  const sendToAPI = useCallback(async (userMessage: string) => {
+    if (!userMessage.trim() || isLoadingRef.current) return;
+
+    const trimmed = userMessage.trim();
+    setMessages(prev => [...prev, { role: 'user', content: trimmed }]);
+    setIsLoading(true);
+
+    const course = selectedCourseRef.current;
+    const hole = currentHoleRef.current;
+    const holeData = course?.holes.find(h => h.holeNumber === hole) || null;
+
+    try {
+      const response = await fetch('/api/caddie/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: trimmed,
+          profile: DEMO_PROFILE,
+          mode: modeRef.current,
+          personality: personalityRef.current,
+          conversationHistory: messagesRef.current.slice(-10),
+          currentHole: holeData,
+          round: course ? {
+            courseData: course,
+            currentHole: hole,
+            teeBox: 'white',
+            scores: [],
+            shotNumber: 1,
+            lie: 'tee',
+          } : null,
+        }),
+      });
+
+      const data = await response.json();
+      const reply = data.error ? UI_MESSAGES.connectionError : data.message;
+
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      return reply;
+    } catch {
+      const errMsg = 'Connection error. Check your signal and try again.';
+      setMessages(prev => [...prev, { role: 'assistant', content: errMsg }]);
+      return errMsg;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Voice hook — auto-sends transcript and speaks the response
+  const handleTranscript = useCallback(async (text: string) => {
+    if (modeRef.current !== 'voice') return;
+    const reply = await sendToAPI(text);
+    if (reply) {
+      voice.speak(reply);
+    }
+  }, [sendToAPI]);
+
+  const voice = useVoice({
+    onTranscript: handleTranscript,
+  });
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -72,18 +149,16 @@ export default function Home() {
         setCourseResults([]);
         setShowCoursePanel(false);
 
-        // Auto-announce to the caddie
         const holeName = data.course.holes?.[0];
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: `Loaded ${data.course.name}${data.course.city ? ` in ${data.course.city}${data.course.state ? ', ' + data.course.state : ''}` : ''}. ${data.course.holes?.length || 0} holes ready. You're on hole 1 — par ${holeName?.par || 4}, ${holeName?.yardage || '???'} yards. What do you need?`,
-        }]);
+        const announcement = `Loaded ${data.course.name}${data.course.city ? ` in ${data.course.city}${data.course.state ? ', ' + data.course.state : ''}` : ''}. ${data.course.holes?.length || 0} holes ready. You're on hole 1 — par ${holeName?.par || 4}, ${holeName?.yardage || '???'} yards. What do you need?`;
+        setMessages(prev => [...prev, { role: 'assistant', content: announcement }]);
+
+        if (mode === 'voice') {
+          voice.speak(announcement);
+        }
       }
     } catch {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: UI_MESSAGES.courseLoadError,
-      }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: UI_MESSAGES.courseLoadError }]);
     }
   };
 
@@ -95,60 +170,40 @@ export default function Home() {
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
-
     const userMessage = input.trim();
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-    setIsLoading(true);
 
-    const holeData = getCurrentHoleData();
+    const reply = await sendToAPI(userMessage);
+    // In voice mode, also speak the response when sent via text
+    if (mode === 'voice' && reply) {
+      voice.speak(reply);
+    }
+  };
 
-    try {
-      const response = await fetch('/api/caddie/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMessage,
-          profile: DEMO_PROFILE,
-          mode,
-          personality,
-          conversationHistory: messages.slice(-10),
-          currentHole: holeData,
-          round: selectedCourse ? {
-            courseData: selectedCourse,
-            currentHole,
-            teeBox: 'white',
-            scores: [],
-            shotNumber: 1,
-            lie: 'tee',
-          } : null,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.error) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: UI_MESSAGES.connectionError,
-        }]);
-      } else {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: data.message,
-        }]);
-      }
-    } catch (error) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Connection error. Make sure the dev server is running (npm run dev).',
-      }]);
-    } finally {
-      setIsLoading(false);
+  // Switch to voice mode and auto-start listening
+  const toggleMode = () => {
+    if (mode === 'chat') {
+      setMode('voice');
+      // Small delay to let state settle before starting recognition
+      setTimeout(() => voice.startListening(), 300);
+    } else {
+      setMode('chat');
+      voice.stopListening();
+      voice.stopSpeaking();
     }
   };
 
   const holeData = getCurrentHoleData();
+
+  // Voice status indicator text
+  const getVoiceStatusText = () => {
+    switch (voice.status) {
+      case 'listening': return 'Listening...';
+      case 'speaking': return 'Caddy is speaking...';
+      case 'error': return voice.error || 'Voice error';
+      default: return 'Tap mic to talk';
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
@@ -188,10 +243,10 @@ export default function Home() {
 
             {/* Mode Toggle */}
             <button
-              onClick={() => setMode(m => m === 'chat' ? 'voice' : 'chat')}
+              onClick={toggleMode}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 mode === 'voice'
-                  ? 'bg-green-600 text-white'
+                  ? 'bg-green-600 text-white ring-2 ring-green-400 ring-opacity-50'
                   : 'bg-gray-800 text-gray-300 border border-gray-700'
               }`}
             >
@@ -217,7 +272,6 @@ export default function Home() {
               )}
             </div>
 
-            {/* Search Results */}
             {courseResults.length > 0 && (
               <div className="space-y-1 max-h-48 overflow-y-auto mb-3">
                 {courseResults.slice(0, API_SETTINGS.courseSearchMaxResults).map(course => (
@@ -237,7 +291,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* Hole Selector (when course is loaded) */}
             {selectedCourse && (
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -260,10 +313,9 @@ export default function Home() {
                       onClick={() => {
                         setCurrentHole(hole.holeNumber);
                         setShowCoursePanel(false);
-                        setMessages(prev => [...prev, {
-                          role: 'assistant',
-                          content: `Hole ${hole.holeNumber} — par ${hole.par}, ${hole.yardage} yards.${hole.strokeIndex ? ` Stroke index ${hole.strokeIndex}.` : ''} What do you need?`,
-                        }]);
+                        const msg = `Hole ${hole.holeNumber} — par ${hole.par}, ${hole.yardage} yards.${hole.strokeIndex ? ` Stroke index ${hole.strokeIndex}.` : ''} What do you need?`;
+                        setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+                        if (mode === 'voice') voice.speak(msg);
                       }}
                       className={`w-10 h-10 rounded-lg text-sm font-medium transition-colors ${
                         hole.holeNumber === currentHole
@@ -290,10 +342,9 @@ export default function Home() {
                   setCurrentHole(newHole);
                   const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
                   if (h) {
-                    setMessages(prev => [...prev, {
-                      role: 'assistant',
-                      content: `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. Let's go.`,
-                    }]);
+                    const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. Let's go.`;
+                    setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+                    if (mode === 'voice') voice.speak(msg);
                   }
                 }
               }}
@@ -317,10 +368,9 @@ export default function Home() {
                   setCurrentHole(newHole);
                   const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
                   if (h) {
-                    setMessages(prev => [...prev, {
-                      role: 'assistant',
-                      content: `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. What do you need?`,
-                    }]);
+                    const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. What do you need?`;
+                    setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+                    if (mode === 'voice') voice.speak(msg);
                   }
                 }
               }}
@@ -348,6 +398,14 @@ export default function Home() {
               <p className="text-gray-600 text-sm mb-8">
                 {UI_MESSAGES.welcomeHint}
               </p>
+
+              {/* Voice support notice */}
+              {voice.isSupported && (
+                <p className="text-green-500 text-sm mb-6">
+                  🎤 Voice mode available — tap the Voice button to talk to your caddy
+                </p>
+              )}
+
               <div className="flex flex-wrap justify-center gap-2">
                 {SUGGESTED_PROMPTS.map((suggestion) => (
                   <button
@@ -386,6 +444,17 @@ export default function Home() {
             </div>
           ))}
 
+          {/* Show interim transcript while listening */}
+          {voice.interimTranscript && (
+            <div className="flex justify-end">
+              <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-green-600 bg-opacity-50 text-white">
+                <p className="text-sm leading-relaxed italic">
+                  {voice.interimTranscript}...
+                </p>
+              </div>
+            </div>
+          )}
+
           {isLoading && (
             <div className="flex justify-start">
               <div className="bg-gray-800 rounded-2xl px-4 py-3">
@@ -403,35 +472,101 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Input */}
+      {/* Input — changes based on mode */}
       <footer className="border-t border-gray-800 px-6 py-4">
-        <form onSubmit={sendMessage} className="max-w-3xl mx-auto flex gap-3">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              selectedCourse
-                ? `Ask about hole ${currentHole} at ${selectedCourse.name}...`
-                : mode === 'voice'
-                  ? "Ask your caddie (voice mode: short answers)..."
+        {mode === 'voice' ? (
+          /* Voice Mode Input */
+          <div className="max-w-3xl mx-auto flex flex-col items-center gap-3">
+            {/* Big mic button */}
+            <button
+              onClick={() => {
+                if (voice.isSpeaking) {
+                  voice.stopSpeaking();
+                } else if (voice.isListening) {
+                  voice.stopListening();
+                } else if (!isLoading) {
+                  voice.startListening();
+                }
+              }}
+              disabled={isLoading}
+              className={`w-20 h-20 rounded-full flex items-center justify-center text-3xl transition-all duration-200 ${
+                voice.isListening
+                  ? 'bg-red-500 hover:bg-red-400 scale-110 animate-pulse'
+                  : voice.isSpeaking
+                    ? 'bg-green-500 hover:bg-green-400 scale-105'
+                    : isLoading
+                      ? 'bg-gray-700 text-gray-500'
+                      : 'bg-green-600 hover:bg-green-500 hover:scale-105'
+              }`}
+            >
+              {voice.isListening ? '🔴' : voice.isSpeaking ? '🔊' : isLoading ? '⏳' : '🎤'}
+            </button>
+
+            {/* Voice status */}
+            <p className={`text-sm ${
+              voice.isListening ? 'text-red-400' :
+              voice.isSpeaking ? 'text-green-400' :
+              voice.error ? 'text-yellow-400' :
+              'text-gray-500'
+            }`}>
+              {isLoading ? 'Caddy is thinking...' : getVoiceStatusText()}
+            </p>
+
+            {/* Error display */}
+            {voice.error && (
+              <p className="text-xs text-yellow-400 text-center max-w-xs">
+                {voice.error}
+              </p>
+            )}
+
+            {/* Fallback text input in voice mode */}
+            <form onSubmit={sendMessage} className="w-full flex gap-3">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Or type here..."
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-green-500 transition-colors"
+                disabled={isLoading}
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+              >
+                Send
+              </button>
+            </form>
+          </div>
+        ) : (
+          /* Chat Mode Input */
+          <form onSubmit={sendMessage} className="max-w-3xl mx-auto flex gap-3">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={
+                selectedCourse
+                  ? `Ask about hole ${currentHole} at ${selectedCourse.name}...`
                   : "Ask your caddie anything..."
-            }
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500 transition-colors"
-            disabled={isLoading}
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-6 py-3 rounded-xl font-medium transition-colors"
-          >
-            Send
-          </button>
-        </form>
+              }
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500 transition-colors"
+              disabled={isLoading}
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-6 py-3 rounded-xl font-medium transition-colors"
+            >
+              Send
+            </button>
+          </form>
+        )}
         <p className="text-center text-xs text-gray-600 mt-2">
           Playing as {DEMO_PROFILE.name} · {DEMO_PROFILE.handicap} handicap
           {selectedCourse && ` · ${selectedCourse.name} · Hole ${currentHole}`}
           {' · '}{personality.replace('_', ' ')}
+          {mode === 'voice' && ' · 🎤 voice mode'}
         </p>
       </footer>
     </div>
