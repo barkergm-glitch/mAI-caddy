@@ -5,6 +5,10 @@ import { CourseData, HoleData } from '@/lib/types';
 import { DEMO_PROFILE, SUGGESTED_PROMPTS, UI_MESSAGES, API_SETTINGS } from '@/lib/config';
 import { useVoice } from '@/lib/hooks/use-voice';
 import Scorecard, { PlayerScore } from '@/components/Scorecard';
+import BetSetup from '@/components/BetSetup';
+import BetStatus from '@/components/BetStatus';
+import BetSettlement from '@/components/BetSettlement';
+import { BetConfig } from '@/lib/betting/types';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -27,6 +31,7 @@ interface SavedRound {
   currentHole: number;
   players: PlayerScore[];
   messages: Message[];
+  bets: BetConfig[];
   startedAt: string; // ISO timestamp
 }
 
@@ -76,9 +81,10 @@ function parseScoreCommand(text: string): { name: string; hole: number; score: n
 
 // --- Round Summary Component ---
 
-function RoundSummary({ course, players, onNewRound }: {
+function RoundSummary({ course, players, bets, onNewRound }: {
   course: CourseData;
   players: PlayerScore[];
+  bets: BetConfig[];
   onNewRound: () => void;
 }) {
   const totalPar = course.holes.reduce((s, h) => s + h.par, 0);
@@ -123,6 +129,13 @@ function RoundSummary({ course, players, onNewRound }: {
           {course.slopeRating && ` / Slope: ${course.slopeRating}`}
         </div>
 
+        {/* Bet Settlement */}
+        {bets.length > 0 && (
+          <div className="mb-4">
+            <BetSettlement bets={bets} players={players} holes={course.holes} />
+          </div>
+        )}
+
         <button
           onClick={onNewRound}
           className="w-full bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-medium transition-colors"
@@ -160,6 +173,10 @@ export default function Home() {
   const playersRef = useRef(players);
   useEffect(() => { playersRef.current = players; }, [players]);
 
+  // Bet state
+  const [bets, setBets] = useState<BetConfig[]>([]);
+  const [showBetSetup, setShowBetSetup] = useState(false);
+
   // Round state
   const [roundStartedAt, setRoundStartedAt] = useState<string | null>(null);
   const [showRoundSummary, setShowRoundSummary] = useState(false);
@@ -177,6 +194,7 @@ export default function Home() {
       setCurrentHole(saved.currentHole);
       setPlayers(saved.players);
       setMessages(saved.messages);
+      setBets(saved.bets || []);
       setRoundStartedAt(saved.startedAt);
       setShowScorecard(true);
     }
@@ -189,10 +207,11 @@ export default function Home() {
       course: selectedCourse,
       currentHole,
       players,
-      messages: messages.slice(-50), // keep last 50 messages to avoid bloating storage
+      messages: messages.slice(-50),
+      bets,
       startedAt: roundStartedAt,
     });
-  }, [selectedCourse, currentHole, players, messages, roundStartedAt]);
+  }, [selectedCourse, currentHole, players, messages, bets, roundStartedAt]);
 
   // Try to parse score commands from user messages before sending to API
   const tryParseScore = useCallback((text: string): boolean => {
@@ -400,6 +419,7 @@ export default function Home() {
     setCurrentHole(1);
     setPlayers([{ name: DEMO_PROFILE.name, handicap: DEMO_PROFILE.handicap ?? 15, scores: {} }]);
     setMessages([]);
+    setBets([]);
     setRoundStartedAt(null);
     setShowScorecard(false);
     setShowCoursePanel(false);
@@ -436,6 +456,7 @@ export default function Home() {
       <RoundSummary
         course={selectedCourse}
         players={players}
+        bets={bets}
         onNewRound={startNewRound}
       />
     );
@@ -497,6 +518,29 @@ export default function Home() {
                 📋 Card
               </button>
             )}
+
+            {/* Bet Button */}
+            {selectedCourse && (
+              <button
+                onClick={() => setShowBetSetup(true)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+                  bets.length > 0
+                    ? 'bg-yellow-800 text-yellow-200 border border-yellow-600'
+                    : 'bg-gray-800 text-gray-300 border border-gray-700 hover:border-yellow-600'
+                }`}
+              >
+                {bets.length > 0 ? `🎰 ${bets.length} Bet${bets.length > 1 ? 's' : ''}` : '🎰 Add Bet'}
+              </button>
+            )}
+
+            {/* Bet Explainer Link */}
+            <a
+              href="/bets"
+              target="_blank"
+              className="px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-gray-800 text-gray-500 border border-gray-700 hover:text-green-400 hover:border-green-600 transition-colors"
+            >
+              ?
+            </a>
           </div>
         </div>
 
@@ -654,6 +698,20 @@ export default function Home() {
         </div>
       )}
 
+      {/* Bet Setup Modal */}
+      {showBetSetup && (
+        <BetSetup
+          players={players}
+          onConfirm={(bet) => {
+            setBets(prev => [...prev, bet]);
+            setShowBetSetup(false);
+            const msg = `${bet.type === 'nassau' ? 'Nassau' : bet.type === 'skins' ? 'Skins' : bet.type.replace('_', ' ')} — $${bet.amount}. Game on.`;
+            setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+          }}
+          onCancel={() => setShowBetSetup(false)}
+        />
+      )}
+
       {/* Scorecard */}
       {showScorecard && selectedCourse && (
         <div className="shrink-0 px-4 py-2 sm:px-6">
@@ -671,6 +729,24 @@ export default function Home() {
                 }
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Bet Status — during active round */}
+      {bets.length > 0 && selectedCourse && (
+        <div className="shrink-0 px-4 py-2 sm:px-6">
+          <div className="max-w-3xl mx-auto space-y-2">
+            {bets.map((bet, idx) => (
+              <BetStatus
+                key={idx}
+                bet={bet}
+                players={players}
+                holes={selectedCourse.holes}
+                currentHole={currentHole}
+                onRemoveBet={() => setBets(prev => prev.filter((_, i) => i !== idx))}
+              />
+            ))}
           </div>
         </div>
       )}
