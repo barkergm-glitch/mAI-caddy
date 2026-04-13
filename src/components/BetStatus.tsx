@@ -33,17 +33,17 @@ function NassauStatus({ result, bet, currentHole }: {
 
         return (
           <div key={name} className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">{name}</span>
+            <span className="text-xs text-gray-700">{name}</span>
             <div className="flex items-center gap-2">
               <span className={`text-xs font-medium ${
-                current > 0 ? 'text-green-400' : current < 0 ? 'text-red-400' : 'text-gray-500'
+                current > 0 ? 'text-green-700' : current < 0 ? 'text-red-600' : 'text-gray-500'
               }`}>
                 {isFront ? 'F' : 'B'}: {current > 0 ? `+${current}` : current}
               </span>
               <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                overall > 0 ? 'bg-green-900 text-green-400' :
-                overall < 0 ? 'bg-red-900 text-red-400' :
-                'bg-gray-800 text-gray-400'
+                overall > 0 ? 'bg-green-100 text-green-700' :
+                overall < 0 ? 'bg-red-100 text-red-600' :
+                'bg-gray-100 text-gray-500'
               }`}>
                 {status}
               </span>
@@ -53,7 +53,7 @@ function NassauStatus({ result, bet, currentHole }: {
       })}
       {/* Presses */}
       {result.presses.length > 0 && (
-        <div className="text-[10px] text-yellow-400 mt-1">
+        <div className="text-[10px] text-amber-600 mt-1">
           {result.presses.length} press{result.presses.length > 1 ? 'es' : ''} active
         </div>
       )}
@@ -73,9 +73,9 @@ function SkinsStatus({ result, bet }: {
         const skins = result.totals[name] || 0;
         return (
           <div key={name} className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">{name}</span>
+            <span className="text-xs text-gray-700">{name}</span>
             <span className={`text-xs font-bold ${
-              skins > 0 ? 'text-green-400' : 'text-gray-500'
+              skins > 0 ? 'text-green-700' : 'text-gray-500'
             }`}>
               {skins} skin{skins !== 1 ? 's' : ''} (${skins * bet.amount})
             </span>
@@ -83,7 +83,7 @@ function SkinsStatus({ result, bet }: {
         );
       })}
       {result.carryover > 0 && (
-        <div className="text-[10px] text-yellow-400">
+        <div className="text-[10px] text-amber-600">
           {result.carryover} skin{result.carryover > 1 ? 's' : ''} carrying over — next hole worth {result.carryover + 1}!
         </div>
       )}
@@ -105,14 +105,14 @@ export default function BetStatus({ bet, players, holes, currentHole, onRemoveBe
   }, [bet, players, holes]);
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-700 p-3">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-green-400 font-medium">
+        <span className="text-xs text-green-700 font-medium">
           {typeInfo.emoji} {typeInfo.name} · ${bet.amount}
         </span>
         <button
           onClick={onRemoveBet}
-          className="text-[10px] text-gray-600 hover:text-red-400 transition-colors"
+          className="text-[10px] text-gray-400 hover:text-red-500 transition-colors"
         >
           Remove
         </button>

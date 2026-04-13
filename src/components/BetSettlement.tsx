@@ -39,13 +39,13 @@ export default function BetSettlement({ bets, players, holes }: BetSettlementPro
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-bold text-green-400">Bet Settlement</h3>
+      <h3 className="text-lg font-bold text-green-700">Bet Settlement</h3>
 
       {/* Per-bet breakdown */}
       {settlements.map(({ bet, settlement, typeInfo }, idx) => (
-        <div key={idx} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+        <div key={idx} className="bg-sky-50 rounded-xl p-4 border border-sky-200">
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm font-medium text-gray-200">
+            <span className="text-sm font-medium text-gray-800">
               {typeInfo.emoji} {typeInfo.name}
             </span>
             <span className="text-xs text-gray-500">${bet.amount}/bet</span>
@@ -55,11 +55,11 @@ export default function BetSettlement({ bets, players, holes }: BetSettlementPro
             <div className="space-y-2">
               {settlement.details.map((d, i) => (
                 <div key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">{d.label}</span>
+                  <span className="text-gray-500">{d.label}</span>
                   <div>
-                    <span className="text-green-400 font-medium">{d.winner}</span>
-                    <span className="text-gray-600 mx-1">beats</span>
-                    <span className="text-red-400">{d.loser}</span>
+                    <span className="text-green-700 font-medium">{d.winner}</span>
+                    <span className="text-gray-400 mx-1">beats</span>
+                    <span className="text-red-600">{d.loser}</span>
                     <span className="text-gray-500 ml-2">${d.amount}</span>
                   </div>
                 </div>
@@ -72,17 +72,17 @@ export default function BetSettlement({ bets, players, holes }: BetSettlementPro
       ))}
 
       {/* Total settlement */}
-      <div className="bg-gray-800 rounded-xl p-4 border border-green-800">
-        <h4 className="text-sm font-medium text-gray-300 mb-3">Final Settlement</h4>
+      <div className="bg-green-50 rounded-xl p-4 border border-green-300">
+        <h4 className="text-sm font-medium text-gray-700 mb-3">Final Settlement</h4>
         <div className="space-y-2">
           {Object.entries(totalNet)
             .sort(([, a], [, b]) => b - a)
             .map(([name, amount]) => (
               <div key={name} className="flex items-center justify-between">
-                <span className="text-sm text-gray-200">{name}</span>
+                <span className="text-sm text-gray-800">{name}</span>
                 <span className={`text-lg font-bold ${
-                  amount > 0 ? 'text-green-400' :
-                  amount < 0 ? 'text-red-400' :
+                  amount > 0 ? 'text-green-700' :
+                  amount < 0 ? 'text-red-600' :
                   'text-gray-500'
                 }`}>
                   {amount > 0 ? '+' : ''}{amount === 0 ? 'Even' : `$${amount}`}

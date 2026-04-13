@@ -59,10 +59,10 @@ function relativeDisplay(total: number | null, par: number): string {
 
 function CourseHeader({ course, currentHole, totalHoles }: { course: CourseData; currentHole: number; totalHoles: number }) {
   return (
-    <div className="bg-gray-800 px-3 py-2">
+    <div className="bg-sky-50 px-3 py-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs sm:text-sm text-green-400 font-medium truncate max-w-[60%]">{course.name}</span>
-        <span className="text-xs text-gray-400">Hole {currentHole}/{totalHoles}</span>
+        <span className="text-xs sm:text-sm text-green-700 font-medium truncate max-w-[60%]">{course.name}</span>
+        <span className="text-xs text-gray-500">Hole {currentHole}/{totalHoles}</span>
       </div>
       {(course.courseRating || course.slopeRating) && (
         <div className="flex gap-3 mt-0.5">
@@ -82,10 +82,10 @@ function CourseHeader({ course, currentHole, totalHoles }: { course: CourseData;
 
 function NoHoleData({ course, currentHole }: { course: CourseData; currentHole: number }) {
   return (
-    <div className="w-full bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+    <div className="w-full bg-white rounded-xl border border-gray-200 overflow-hidden">
       <CourseHeader course={course} currentHole={currentHole} totalHoles={course.holes.length || 18} />
       <div className="px-4 py-6 text-center">
-        <p className="text-gray-400 text-sm">No hole data available for this course.</p>
+        <p className="text-gray-500 text-sm">No hole data available for this course.</p>
         <p className="text-gray-500 text-xs mt-1">Try a more well-known course — the API has better data for major courses.</p>
       </div>
     </div>
@@ -119,50 +119,50 @@ function PortraitScorecard({ course, currentHole, players, onHoleTap }: Scorecar
   const totalPar = sumPar(allHoles);
 
   return (
-    <div className="w-full bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+    <div className="w-full bg-white rounded-xl border border-gray-200 overflow-hidden">
       <CourseHeader course={course} currentHole={currentHole} totalHoles={allHoles.length} />
 
       <div className="overflow-x-auto">
         <table className="w-full text-center text-xs">
           <thead>
-            <tr className="border-b border-gray-700">
+            <tr className="border-b border-gray-200">
               <th className="px-2 py-1.5 text-left text-gray-500 font-normal w-20">Hole</th>
               {visibleHoles.map(h => (
                 <th
                   key={h.holeNumber}
                   className={`px-3 py-1.5 font-bold cursor-pointer min-w-[52px] ${
                     h.holeNumber === currentHole
-                      ? 'text-green-400 bg-green-900/30'
-                      : 'text-gray-300'
+                      ? 'text-green-700 bg-green-50'
+                      : 'text-gray-700'
                   }`}
                   onClick={() => onHoleTap?.(h.holeNumber)}
                 >
                   {h.holeNumber}
                 </th>
               ))}
-              <th className="px-2 py-1.5 text-gray-400 font-medium min-w-[42px]">Tot</th>
-              <th className="px-2 py-1.5 text-gray-400 font-medium min-w-[42px]">+/-</th>
+              <th className="px-2 py-1.5 text-gray-500 font-medium min-w-[42px]">Tot</th>
+              <th className="px-2 py-1.5 text-gray-500 font-medium min-w-[42px]">+/-</th>
             </tr>
           </thead>
           <tbody>
             {/* Par row */}
-            <tr className="border-b border-gray-800">
+            <tr className="border-b border-gray-100">
               <td className="px-2 py-1 text-left text-gray-500">Par</td>
               {visibleHoles.map(h => (
-                <td key={h.holeNumber} className={`py-1 text-gray-400 font-medium ${
-                  h.holeNumber === currentHole ? 'bg-green-900/30' : ''
+                <td key={h.holeNumber} className={`py-1 text-gray-500 font-medium ${
+                  h.holeNumber === currentHole ? 'bg-green-50' : ''
                 }`}>{h.par}</td>
               ))}
-              <td className="py-1 text-gray-400">{totalPar}</td>
+              <td className="py-1 text-gray-500">{totalPar}</td>
               <td className="py-1">-</td>
             </tr>
 
             {/* Yardage row */}
-            <tr className="border-b border-gray-800">
+            <tr className="border-b border-gray-100">
               <td className="px-2 py-1 text-left text-gray-500">Yds</td>
               {visibleHoles.map(h => (
                 <td key={h.holeNumber} className={`py-1 text-gray-500 ${
-                  h.holeNumber === currentHole ? 'bg-green-900/30' : ''
+                  h.holeNumber === currentHole ? 'bg-green-50' : ''
                 }`}>{h.yardage}</td>
               ))}
               <td className="py-1 text-gray-500">{allHoles.reduce((s, h) => s + h.yardage, 0)}</td>
@@ -170,11 +170,11 @@ function PortraitScorecard({ course, currentHole, players, onHoleTap }: Scorecar
             </tr>
 
             {/* Handicap / Stroke Index row */}
-            <tr className="border-b border-gray-700">
+            <tr className="border-b border-gray-200">
               <td className="px-2 py-1 text-left text-gray-500">SI</td>
               {visibleHoles.map(h => (
-                <td key={h.holeNumber} className={`py-1 text-gray-600 ${
-                  h.holeNumber === currentHole ? 'bg-green-900/30' : ''
+                <td key={h.holeNumber} className={`py-1 text-gray-400 ${
+                  h.holeNumber === currentHole ? 'bg-green-50' : ''
                 }`}>{h.strokeIndex || '-'}</td>
               ))}
               <td className="py-1">-</td>
@@ -185,28 +185,28 @@ function PortraitScorecard({ course, currentHole, players, onHoleTap }: Scorecar
             {players.map((player) => {
               const total = sumScores(player, allHoles);
               return (
-                <tr key={player.name} className="border-b border-gray-800 last:border-b-0">
+                <tr key={player.name} className="border-b border-gray-100 last:border-b-0">
                   <td className="px-2 py-1.5 text-left">
-                    <div className="text-gray-200 font-medium truncate max-w-[72px]">{player.name}</div>
+                    <div className="text-gray-800 font-medium truncate max-w-[72px]">{player.name}</div>
                     <div className="text-gray-500 text-[10px]">{player.handicap} hcp</div>
                   </td>
                   {visibleHoles.map(h => {
                     const score = player.scores[h.holeNumber];
                     return (
-                      <td key={h.holeNumber} className={`py-1.5 ${h.holeNumber === currentHole ? 'bg-green-900/30' : ''}`}>
+                      <td key={h.holeNumber} className={`py-1.5 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>
                         <span className={`inline-flex items-center justify-center w-7 h-7 text-sm font-medium ${getScoreStyle(score, h.par)}`}>
                           {getScoreLabel(score)}
                         </span>
                       </td>
                     );
                   })}
-                  <td className="py-1.5 text-gray-200 font-medium">
+                  <td className="py-1.5 text-gray-800 font-medium">
                     {total !== null ? total : '-'}
                   </td>
                   <td className={`py-1.5 font-medium ${
-                    total !== null && total - totalPar < 0 ? 'text-red-400' :
-                    total !== null && total - totalPar > 0 ? 'text-yellow-400' :
-                    'text-gray-400'
+                    total !== null && total - totalPar < 0 ? 'text-red-600' :
+                    total !== null && total - totalPar > 0 ? 'text-amber-600' :
+                    'text-gray-500'
                   }`}>
                     {relativeDisplay(total, totalPar)}
                   </td>
@@ -249,14 +249,14 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
 
   return (
     <div
-      className="w-full bg-gray-900 rounded-xl border border-gray-700 overflow-hidden"
+      className="w-full bg-white rounded-xl border border-gray-200 overflow-hidden"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       {/* Header */}
-      <div className="bg-gray-800 px-3 py-1.5 flex items-center justify-between">
+      <div className="bg-sky-50 px-3 py-1.5 flex items-center justify-between">
         <div>
-          <span className="text-xs text-green-400 font-medium truncate">{course.name}</span>
+          <span className="text-xs text-green-700 font-medium truncate">{course.name}</span>
           {(course.courseRating || course.slopeRating) && (
             <span className="text-[10px] text-gray-500 ml-2">
               {course.courseRating && `R: ${course.courseRating}`}
@@ -270,13 +270,13 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
             <button
               onClick={() => setShowingNine('front')}
               className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-                showingNine === 'front' ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-400'
+                showingNine === 'front' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-500'
               }`}
             >OUT</button>
             <button
               onClick={() => setShowingNine('back')}
               className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-                showingNine === 'back' ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-400'
+                showingNine === 'back' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-500'
               }`}
             >IN</button>
           </div>
@@ -286,39 +286,39 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
       <div className="overflow-x-auto">
         <table className="w-full text-center text-[11px]">
           <thead>
-            <tr className="border-b border-gray-700">
-              <th className="px-1.5 py-1 text-left text-gray-500 font-normal sticky left-0 bg-gray-900 z-10 w-14">Hole</th>
+            <tr className="border-b border-gray-200">
+              <th className="px-1.5 py-1 text-left text-gray-500 font-normal sticky left-0 bg-white z-10 w-14">Hole</th>
               {nineHoles.map(h => (
                 <th
                   key={h.holeNumber}
                   className={`px-1 py-1 font-bold cursor-pointer min-w-[32px] ${
-                    h.holeNumber === currentHole ? 'text-green-400 bg-green-900/30' : 'text-gray-300'
+                    h.holeNumber === currentHole ? 'text-green-700 bg-green-50' : 'text-gray-700'
                   }`}
                   onClick={() => onHoleTap?.(h.holeNumber)}
                 >{h.holeNumber}</th>
               ))}
-              <th className="px-1 py-1 text-gray-400 font-medium min-w-[30px]">{showingNine === 'front' ? 'Out' : 'In'}</th>
-              <th className="px-1 py-1 text-gray-400 font-medium min-w-[30px]">Tot</th>
-              <th className="px-1 py-1 text-gray-400 font-medium min-w-[28px]">+/-</th>
+              <th className="px-1 py-1 text-gray-500 font-medium min-w-[30px]">{showingNine === 'front' ? 'Out' : 'In'}</th>
+              <th className="px-1 py-1 text-gray-500 font-medium min-w-[30px]">Tot</th>
+              <th className="px-1 py-1 text-gray-500 font-medium min-w-[28px]">+/-</th>
             </tr>
           </thead>
           <tbody>
             {/* Par */}
-            <tr className="border-b border-gray-800">
-              <td className="px-1.5 py-0.5 text-left text-gray-500 sticky left-0 bg-gray-900 z-10">Par</td>
+            <tr className="border-b border-gray-100">
+              <td className="px-1.5 py-0.5 text-left text-gray-500 sticky left-0 bg-white z-10">Par</td>
               {nineHoles.map(h => (
-                <td key={h.holeNumber} className={`py-0.5 text-gray-400 ${h.holeNumber === currentHole ? 'bg-green-900/30' : ''}`}>{h.par}</td>
+                <td key={h.holeNumber} className={`py-0.5 text-gray-500 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>{h.par}</td>
               ))}
-              <td className="py-0.5 text-gray-400 font-medium">{sumPar(nineHoles)}</td>
-              <td className="py-0.5 text-gray-400">{sumPar(allHoles)}</td>
+              <td className="py-0.5 text-gray-500 font-medium">{sumPar(nineHoles)}</td>
+              <td className="py-0.5 text-gray-500">{sumPar(allHoles)}</td>
               <td className="py-0.5">-</td>
             </tr>
 
             {/* Yardage */}
-            <tr className="border-b border-gray-800">
-              <td className="px-1.5 py-0.5 text-left text-gray-500 sticky left-0 bg-gray-900 z-10">Yds</td>
+            <tr className="border-b border-gray-100">
+              <td className="px-1.5 py-0.5 text-left text-gray-500 sticky left-0 bg-white z-10">Yds</td>
               {nineHoles.map(h => (
-                <td key={h.holeNumber} className={`py-0.5 text-gray-600 ${h.holeNumber === currentHole ? 'bg-green-900/30' : ''}`}>{h.yardage}</td>
+                <td key={h.holeNumber} className={`py-0.5 text-gray-400 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>{h.yardage}</td>
               ))}
               <td className="py-0.5 text-gray-500">{nineHoles.reduce((s, h) => s + h.yardage, 0)}</td>
               <td className="py-0.5 text-gray-500">{allHoles.reduce((s, h) => s + h.yardage, 0)}</td>
@@ -326,10 +326,10 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
             </tr>
 
             {/* Stroke Index */}
-            <tr className="border-b border-gray-700">
-              <td className="px-1.5 py-0.5 text-left text-gray-600 sticky left-0 bg-gray-900 z-10">SI</td>
+            <tr className="border-b border-gray-200">
+              <td className="px-1.5 py-0.5 text-left text-gray-400 sticky left-0 bg-white z-10">SI</td>
               {nineHoles.map(h => (
-                <td key={h.holeNumber} className={`py-0.5 text-gray-600 ${h.holeNumber === currentHole ? 'bg-green-900/30' : ''}`}>{h.strokeIndex || '-'}</td>
+                <td key={h.holeNumber} className={`py-0.5 text-gray-400 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>{h.strokeIndex || '-'}</td>
               ))}
               <td className="py-0.5">-</td>
               <td className="py-0.5">-</td>
@@ -342,27 +342,27 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
               const fullTotal = sumScores(player, allHoles);
               const fullPar = sumPar(allHoles);
               return (
-                <tr key={player.name} className="border-b border-gray-800 last:border-b-0">
-                  <td className="px-1.5 py-1 text-left sticky left-0 bg-gray-900 z-10">
-                    <div className="text-gray-200 font-medium text-[10px] truncate max-w-[48px]">{player.name}</div>
+                <tr key={player.name} className="border-b border-gray-100 last:border-b-0">
+                  <td className="px-1.5 py-1 text-left sticky left-0 bg-white z-10">
+                    <div className="text-gray-800 font-medium text-[10px] truncate max-w-[48px]">{player.name}</div>
                     <div className="text-gray-500 text-[9px]">{player.handicap}</div>
                   </td>
                   {nineHoles.map(h => {
                     const score = player.scores[h.holeNumber];
                     return (
-                      <td key={h.holeNumber} className={`py-0.5 ${h.holeNumber === currentHole ? 'bg-green-900/30' : ''}`}>
+                      <td key={h.holeNumber} className={`py-0.5 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>
                         <span className={`inline-flex items-center justify-center w-6 h-6 text-[11px] font-medium ${getScoreStyle(score, h.par)}`}>
                           {getScoreLabel(score)}
                         </span>
                       </td>
                     );
                   })}
-                  <td className="py-0.5 text-gray-200 font-medium">{nineTotal ?? '-'}</td>
-                  <td className="py-0.5 text-gray-200 font-bold">{fullTotal ?? '-'}</td>
+                  <td className="py-0.5 text-gray-800 font-medium">{nineTotal ?? '-'}</td>
+                  <td className="py-0.5 text-gray-800 font-bold">{fullTotal ?? '-'}</td>
                   <td className={`py-0.5 font-medium ${
-                    fullTotal !== null && fullTotal - fullPar < 0 ? 'text-red-400' :
-                    fullTotal !== null && fullTotal - fullPar > 0 ? 'text-yellow-400' :
-                    'text-gray-400'
+                    fullTotal !== null && fullTotal - fullPar < 0 ? 'text-red-600' :
+                    fullTotal !== null && fullTotal - fullPar > 0 ? 'text-amber-600' :
+                    'text-gray-500'
                   }`}>
                     {relativeDisplay(fullTotal, fullPar)}
                   </td>
@@ -374,7 +374,7 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
       </div>
 
       {has18 && (
-        <div className="text-center text-[10px] text-gray-600 py-0.5">
+        <div className="text-center text-[10px] text-gray-400 py-0.5">
           ← swipe for {showingNine === 'front' ? 'back' : 'front'} 9 →
         </div>
       )}

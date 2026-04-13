@@ -2,7 +2,7 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1a1a2e;
 }
 
 @theme inline {
@@ -10,13 +10,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -40,35 +33,35 @@ html, body {
 
 /* Eagle or better: double circle */
 .score-eagle {
-  color: #facc15;
-  border: 2px solid #facc15;
+  color: #b45309;
+  border: 2px solid #d97706;
   border-radius: 9999px;
-  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #facc15;
+  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #d97706;
 }
 
 /* Birdie: single circle */
 .score-birdie {
-  color: #f87171;
-  border: 2px solid #f87171;
+  color: #dc2626;
+  border: 2px solid #dc2626;
   border-radius: 9999px;
 }
 
 /* Par: clean, no decoration */
 .score-par {
-  color: #e5e7eb;
+  color: #374151;
 }
 
 /* Bogey: single square */
 .score-bogey {
-  color: #60a5fa;
-  border: 2px solid #60a5fa;
+  color: #0284c7;
+  border: 2px solid #0284c7;
   border-radius: 2px;
 }
 
 /* Double bogey or worse: double square */
 .score-double {
-  color: #60a5fa;
-  border: 2px solid #60a5fa;
+  color: #0284c7;
+  border: 2px solid #0284c7;
   border-radius: 2px;
-  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #60a5fa;
+  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #0284c7;
 }
