@@ -18,6 +18,43 @@ interface CourseSearchResult {
   state?: string;
 }
 
+// --- Round persistence via localStorage ---
+
+const ROUND_STORAGE_KEY = 'mai-caddy-round';
+
+interface SavedRound {
+  course: CourseData;
+  currentHole: number;
+  players: PlayerScore[];
+  messages: Message[];
+  startedAt: string; // ISO timestamp
+}
+
+function saveRound(round: SavedRound) {
+  try {
+    localStorage.setItem(ROUND_STORAGE_KEY, JSON.stringify(round));
+  } catch { /* storage full or unavailable — fail silently */ }
+}
+
+function loadRound(): SavedRound | null {
+  try {
+    const raw = localStorage.getItem(ROUND_STORAGE_KEY);
+    if (!raw) return null;
+    const round: SavedRound = JSON.parse(raw);
+    // Sanity check: must have a course with an id
+    if (!round.course?.id) return null;
+    return round;
+  } catch {
+    return null;
+  }
+}
+
+function clearSavedRound() {
+  try {
+    localStorage.removeItem(ROUND_STORAGE_KEY);
+  } catch { /* fail silently */ }
+}
+
 // Parse voice score commands like "Dave hole 5 scored a 6" or "Mike got a 4 on hole 3"
 function parseScoreCommand(text: string): { name: string; hole: number; score: number } | null {
   const lower = text.toLowerCase();
@@ -36,6 +73,68 @@ function parseScoreCommand(text: string): { name: string; hole: number; score: n
 
   return null;
 }
+
+// --- Round Summary Component ---
+
+function RoundSummary({ course, players, onNewRound }: {
+  course: CourseData;
+  players: PlayerScore[];
+  onNewRound: () => void;
+}) {
+  const totalPar = course.holes.reduce((s, h) => s + h.par, 0);
+
+  return (
+    <div className="h-screen bg-gray-950 text-white flex flex-col items-center justify-center px-4">
+      <div className="max-w-md w-full bg-gray-900 rounded-2xl border border-gray-700 p-6">
+        <h2 className="text-2xl font-bold text-green-400 text-center mb-1">Round Complete</h2>
+        <p className="text-gray-500 text-center text-sm mb-6">{course.name}</p>
+
+        <div className="space-y-4 mb-6">
+          {players.map(player => {
+            const holesPlayed = Object.keys(player.scores).length;
+            const totalStrokes = Object.values(player.scores).reduce((s, v) => s + v, 0);
+            const scoredHoles = course.holes.filter(h => player.scores[h.holeNumber] !== undefined);
+            const scoredPar = scoredHoles.reduce((s, h) => s + h.par, 0);
+            const diff = totalStrokes - scoredPar;
+            const diffStr = diff === 0 ? 'E' : diff > 0 ? `+${diff}` : `${diff}`;
+
+            return (
+              <div key={player.name} className="flex items-center justify-between border-b border-gray-800 pb-3 last:border-b-0">
+                <div>
+                  <div className="text-gray-200 font-medium">{player.name}</div>
+                  <div className="text-gray-500 text-xs">{player.handicap} hcp · {holesPlayed} holes scored</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-gray-100">{holesPlayed > 0 ? totalStrokes : '-'}</div>
+                  <div className={`text-sm font-medium ${
+                    diff < 0 ? 'text-red-400' : diff > 0 ? 'text-yellow-400' : 'text-gray-400'
+                  }`}>
+                    {holesPlayed > 0 ? diffStr : '-'}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="text-center text-xs text-gray-600 mb-4">
+          Course par: {totalPar} · {course.holes.length} holes
+          {course.courseRating && ` · Rating: ${course.courseRating}`}
+          {course.slopeRating && ` / Slope: ${course.slopeRating}`}
+        </div>
+
+        <button
+          onClick={onNewRound}
+          className="w-full bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-medium transition-colors"
+        >
+          New Round
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Main App ---
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -61,6 +160,40 @@ export default function Home() {
   const playersRef = useRef(players);
   useEffect(() => { playersRef.current = players; }, [players]);
 
+  // Round state
+  const [roundStartedAt, setRoundStartedAt] = useState<string | null>(null);
+  const [showRoundSummary, setShowRoundSummary] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+
+  // --- Restore round from localStorage on mount ---
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+
+    const saved = loadRound();
+    if (saved) {
+      setSelectedCourse(saved.course);
+      setCurrentHole(saved.currentHole);
+      setPlayers(saved.players);
+      setMessages(saved.messages);
+      setRoundStartedAt(saved.startedAt);
+      setShowScorecard(true);
+    }
+  }, []);
+
+  // --- Auto-save round state on changes ---
+  useEffect(() => {
+    if (!selectedCourse || !roundStartedAt) return;
+    saveRound({
+      course: selectedCourse,
+      currentHole,
+      players,
+      messages: messages.slice(-50), // keep last 50 messages to avoid bloating storage
+      startedAt: roundStartedAt,
+    });
+  }, [selectedCourse, currentHole, players, messages, roundStartedAt]);
+
   // Try to parse score commands from user messages before sending to API
   const tryParseScore = useCallback((text: string): boolean => {
     const parsed = parseScoreCommand(text);
@@ -68,11 +201,9 @@ export default function Home() {
 
     setPlayers(prev => {
       const updated = [...prev];
-      // Find player by name (case-insensitive first match)
       let playerIdx = updated.findIndex(p =>
         p.name.toLowerCase().startsWith(parsed.name.toLowerCase())
       );
-      // If not found, add them as a new player (they told the caddy about someone new)
       if (playerIdx === -1) {
         const capitalized = parsed.name.charAt(0).toUpperCase() + parsed.name.slice(1);
         updated.push({ name: capitalized, handicap: 15, scores: {} });
@@ -90,7 +221,7 @@ export default function Home() {
   // Refs to access latest state in voice callbacks
   const messagesRef = useRef<Message[]>([]);
   const modeRef = useRef(mode);
-  const personalityRef = useRef(personality); // constant but ref keeps API callback stable
+  const personalityRef = useRef(personality);
   const selectedCourseRef = useRef(selectedCourse);
   const currentHoleRef = useRef(currentHole);
   const isLoadingRef = useRef(false);
@@ -105,7 +236,6 @@ export default function Home() {
   const sendToAPI = useCallback(async (userMessage: string) => {
     if (!userMessage.trim() || isLoadingRef.current) return;
 
-    // Try to parse as a score command first (still send to API for caddy confirmation)
     tryParseScore(userMessage);
 
     const trimmed = userMessage.trim();
@@ -152,10 +282,9 @@ export default function Home() {
     }
   }, []);
 
-  // Ref to hold speak function — breaks circular dependency between handleTranscript and voice hook
+  // Ref to hold speak function
   const speakRef = useRef<((text: string) => Promise<void>) | undefined>(undefined);
 
-  // Voice hook — auto-sends transcript and speaks the response
   const handleTranscript = useCallback(async (text: string) => {
     if (modeRef.current !== 'voice') return;
     const reply = await sendToAPI(text);
@@ -168,13 +297,11 @@ export default function Home() {
     onTranscript: handleTranscript,
   });
 
-  // Keep speak ref in sync
   useEffect(() => {
     speakRef.current = voice.speak;
   }, [voice.speak]);
 
-  // iOS Safari requires a user-gesture-triggered utterance to "warm up" speechSynthesis.
-  // Fire a silent utterance on the first mic tap so subsequent speak() calls work reliably.
+  // iOS Safari TTS warmup
   const ttsWarmedUp = useRef(false);
   const warmUpTTS = useCallback(() => {
     if (ttsWarmedUp.current) return;
@@ -226,6 +353,7 @@ export default function Home() {
         setCourseResults([]);
         setShowCoursePanel(false);
         setShowScorecard(true);
+        setRoundStartedAt(new Date().toISOString());
 
         const holeName = data.course.holes?.[0];
         const announcement = `Loaded ${data.course.name}${data.course.city ? ` in ${data.course.city}${data.course.state ? ', ' + data.course.state : ''}` : ''}. ${data.course.holes?.length || 0} holes ready. You're on hole 1 — par ${holeName?.par || 4}, ${holeName?.yardage || '???'} yards. What do you need?`;
@@ -252,17 +380,37 @@ export default function Home() {
     setInput('');
 
     const reply = await sendToAPI(userMessage);
-    // In voice mode, also speak the response when sent via text
     if (mode === 'voice' && reply) {
       voice.speak(reply);
     }
   };
 
-  // Switch to voice mode and auto-start listening
+  // --- End Round ---
+  const endRound = () => {
+    setShowEndConfirm(false);
+    setShowRoundSummary(true);
+    clearSavedRound();
+    voice.stopListening();
+    voice.stopSpeaking();
+  };
+
+  const startNewRound = () => {
+    setShowRoundSummary(false);
+    setSelectedCourse(null);
+    setCurrentHole(1);
+    setPlayers([{ name: DEMO_PROFILE.name, handicap: DEMO_PROFILE.handicap ?? 15, scores: {} }]);
+    setMessages([]);
+    setRoundStartedAt(null);
+    setShowScorecard(false);
+    setShowCoursePanel(false);
+    setMode('chat');
+    clearSavedRound();
+  };
+
   const toggleMode = () => {
     if (mode === 'chat') {
       setMode('voice');
-      warmUpTTS(); // Ensure iOS Safari TTS is unlocked on this user gesture
+      warmUpTTS();
       setTimeout(() => voice.startListening(), 300);
     } else {
       setMode('chat');
@@ -273,7 +421,6 @@ export default function Home() {
 
   const holeData = getCurrentHoleData();
 
-  // Voice status indicator text
   const getVoiceStatusText = () => {
     switch (voice.status) {
       case 'listening': return 'Listening...';
@@ -283,6 +430,17 @@ export default function Home() {
     }
   };
 
+  // --- Round Summary screen ---
+  if (showRoundSummary && selectedCourse) {
+    return (
+      <RoundSummary
+        course={selectedCourse}
+        players={players}
+        onNewRound={startNewRound}
+      />
+    );
+  }
+
   return (
     <div className="h-screen bg-gray-950 text-white flex flex-col overflow-hidden">
       {/* Header */}
@@ -291,21 +449,31 @@ export default function Home() {
           {/* Top row: logo + mode toggle */}
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-xl sm:text-2xl font-bold text-green-400">mAI Caddy</h1>
-            <button
-              onClick={toggleMode}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                mode === 'voice'
-                  ? 'bg-green-600 text-white ring-2 ring-green-400 ring-opacity-50'
-                  : 'bg-gray-800 text-gray-300 border border-gray-700'
-              }`}
-            >
-              {mode === 'voice' ? '🎤 Voice' : '💬 Chat'}
-            </button>
+            <div className="flex items-center gap-2">
+              {/* End Round button — only during active round */}
+              {selectedCourse && (
+                <button
+                  onClick={() => setShowEndConfirm(true)}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-800 text-red-400 border border-gray-700 hover:border-red-500 transition-colors"
+                >
+                  End Round
+                </button>
+              )}
+              <button
+                onClick={toggleMode}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  mode === 'voice'
+                    ? 'bg-green-600 text-white ring-2 ring-green-400 ring-opacity-50'
+                    : 'bg-gray-800 text-gray-300 border border-gray-700'
+                }`}
+              >
+                {mode === 'voice' ? '🎤 Voice' : '💬 Chat'}
+              </button>
+            </div>
           </div>
 
-          {/* Controls row: course + scorecard — wraps on mobile */}
+          {/* Controls row: course + scorecard */}
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Course Button */}
             <button
               onClick={() => setShowCoursePanel(!showCoursePanel)}
               className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
@@ -317,7 +485,6 @@ export default function Home() {
               {selectedCourse ? `⛳ ${selectedCourse.name.substring(0, 15)}` : `⛳ ${UI_MESSAGES.selectCourse}`}
             </button>
 
-            {/* Scorecard Toggle — only shows when course is selected */}
             {selectedCourse && (
               <button
                 onClick={() => setShowScorecard(!showScorecard)}
@@ -378,7 +545,7 @@ export default function Home() {
                     {selectedCourse.slopeRating && ` / Slope: ${selectedCourse.slopeRating}`}
                   </span>
                   <button
-                    onClick={() => { setSelectedCourse(null); setCourseSearch(''); }}
+                    onClick={() => { setSelectedCourse(null); setCourseSearch(''); setRoundStartedAt(null); clearSavedRound(); }}
                     className="text-xs text-gray-500 hover:text-gray-300"
                   >
                     Change course
@@ -461,7 +628,33 @@ export default function Home() {
         )}
       </header>
 
-      {/* Scorecard — sits between header and messages when visible */}
+      {/* End Round Confirmation Modal */}
+      {showEndConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center px-4">
+          <div className="bg-gray-900 rounded-2xl border border-gray-700 p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold text-gray-200 mb-2">End Round?</h3>
+            <p className="text-gray-400 text-sm mb-6">
+              This will finalize your scores and show your round summary.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowEndConfirm(false)}
+                className="flex-1 bg-gray-800 text-gray-300 py-2.5 rounded-xl font-medium border border-gray-700 hover:bg-gray-700 transition-colors"
+              >
+                Keep Playing
+              </button>
+              <button
+                onClick={endRound}
+                className="flex-1 bg-red-600 hover:bg-red-500 text-white py-2.5 rounded-xl font-medium transition-colors"
+              >
+                End Round
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scorecard */}
       {showScorecard && selectedCourse && (
         <div className="shrink-0 px-4 py-2 sm:px-6">
           <div className="max-w-3xl mx-auto">
@@ -498,7 +691,6 @@ export default function Home() {
                 {UI_MESSAGES.welcomeHint}
               </p>
 
-              {/* Voice support notice */}
               {voice.isSupported && (
                 <p className="text-green-500 text-sm mb-6">
                   🎤 Voice mode available — tap the Voice button to talk to your caddy
@@ -543,7 +735,6 @@ export default function Home() {
             </div>
           ))}
 
-          {/* Show interim transcript while listening */}
           {voice.interimTranscript && (
             <div className="flex justify-end">
               <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-green-600 bg-opacity-50 text-white">
@@ -571,12 +762,10 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Input — changes based on mode */}
+      {/* Input */}
       <footer className="shrink-0 border-t border-gray-800 px-4 py-3 sm:px-6 sm:py-4 safe-bottom">
         {mode === 'voice' ? (
-          /* Voice Mode Input */
           <div className="max-w-3xl mx-auto flex flex-col items-center gap-2">
-            {/* Mic button + status in a row */}
             <div className="flex items-center gap-4">
               <button
                 onClick={() => {
@@ -613,14 +802,12 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Error display */}
             {voice.error && (
               <p className="text-xs text-yellow-400 text-center max-w-xs">
                 {voice.error}
               </p>
             )}
 
-            {/* Fallback text input in voice mode */}
             <form onSubmit={sendMessage} className="w-full flex gap-2">
               <input
                 type="text"
@@ -640,7 +827,6 @@ export default function Home() {
             </form>
           </div>
         ) : (
-          /* Chat Mode Input */
           <form onSubmit={sendMessage} className="max-w-3xl mx-auto flex gap-2 sm:gap-3">
             <input
               type="text"
