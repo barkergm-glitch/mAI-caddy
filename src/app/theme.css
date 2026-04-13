@@ -1,0 +1,71 @@
+/* ============================================================
+   mAI Caddy — Design Tokens (Single Source of Truth)
+   ============================================================
+   Every color in the app traces back here. To change the
+   palette, edit ONLY this file (or swap it for an alternate).
+
+   To add a new theme (e.g., "Dark Mode" or "Sunset"):
+   1. Copy this file → theme-dark.css
+   2. Change the hex values
+   3. Swap the @import in globals.css
+
+   Naming: --mc-{category}-{role}
+   ============================================================ */
+
+:root {
+  /* ---- Brand (Augusta Green) ---- */
+  --mc-brand:          #15803d;  /* green-700 — headings, labels */
+  --mc-brand-bold:     #16a34a;  /* green-600 — buttons, active states */
+  --mc-brand-hover:    #22c55e;  /* green-500 — hover on brand buttons */
+  --mc-brand-light:    #f0fdf4;  /* green-50  — highlight bg, current hole */
+  --mc-brand-muted:    #dcfce7;  /* green-100 — badges, interim chat, subtle bg */
+  --mc-brand-ring:     #4ade80;  /* green-400 — focus rings */
+
+  /* ---- Accent (Sky Blue) ---- */
+  --mc-accent:         #0284c7;  /* sky-600 — accent text */
+  --mc-accent-light:   #f0f9ff;  /* sky-50  — assistant bubbles, panels */
+  --mc-accent-edge:    #bae6fd;  /* sky-200 — panel borders */
+  --mc-accent-hover:   #e0f2fe;  /* sky-100 — hover, chat bubble borders */
+
+  /* ---- Surfaces ---- */
+  --mc-bg-page:        #ffffff;  /* page background */
+  --mc-surface:        #f9fafb;  /* gray-50  — inputs, inactive buttons */
+  --mc-surface-hover:  #f3f4f6;  /* gray-100 — hover on surfaces */
+
+  /* ---- Text Hierarchy ---- */
+  --mc-heading:        #111827;  /* gray-900 — headings, strong body */
+  --mc-body:           #374151;  /* gray-700 — body text, secondary labels */
+  --mc-caption:        #6b7280;  /* gray-500 — captions, tertiary text */
+  --mc-hint:           #9ca3af;  /* gray-400 — placeholders, faint labels */
+
+  /* ---- Borders ---- */
+  --mc-edge:           #e5e7eb;  /* gray-200 — cards, dividers */
+  --mc-edge-soft:      #f3f4f6;  /* gray-100 — subtle inner dividers */
+  --mc-field:          #d1d5db;  /* gray-300 — input borders */
+
+  /* ---- Semantic States ---- */
+  --mc-danger:         #dc2626;  /* red-600 */
+  --mc-danger-light:   #fef2f2;  /* red-50 */
+  --mc-danger-muted:   #fee2e2;  /* red-100 */
+  --mc-warning:        #d97706;  /* amber-600 */
+  --mc-warning-light:  #fffbeb;  /* amber-50 */
+  --mc-warning-muted:  #fef3c7;  /* amber-100 */
+
+  /* ---- Chat Bubbles ---- */
+  --mc-chat-user-bg:   var(--mc-brand-bold);
+  --mc-chat-user-text: #ffffff;
+  --mc-chat-ai-bg:     var(--mc-accent-light);
+  --mc-chat-ai-text:   #1f2937;  /* gray-800 */
+  --mc-chat-ai-edge:   var(--mc-accent-hover);
+
+  /* ---- Scorecard Notation ---- */
+  --mc-score-eagle:        #b45309;  /* amber-700 */
+  --mc-score-eagle-border: #d97706;  /* amber-600 */
+  --mc-score-birdie:       #dc2626;  /* red-600 */
+  --mc-score-par:          #374151;  /* gray-700 */
+  --mc-score-bogey:        #0284c7;  /* sky-600 */
+
+  /* ---- Disabled ---- */
+  --mc-disabled-bg:    #e5e7eb;  /* gray-200 */
+  --mc-disabled-text:  #9ca3af;  /* gray-400 */
+}

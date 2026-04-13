@@ -1,20 +1,59 @@
 @import "tailwindcss";
-
-:root {
-  --background: #ffffff;
-  --foreground: #1a1a2e;
-}
+@import "./theme.css";
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--mc-bg-page);
+  --color-foreground: var(--mc-heading);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* ---- Map tokens → Tailwind utility colors ---- */
+
+  /* Brand */
+  --color-brand:        var(--mc-brand);
+  --color-brand-bold:   var(--mc-brand-bold);
+  --color-brand-hover:  var(--mc-brand-hover);
+  --color-brand-light:  var(--mc-brand-light);
+  --color-brand-muted:  var(--mc-brand-muted);
+  --color-brand-ring:   var(--mc-brand-ring);
+
+  /* Accent */
+  --color-accent:       var(--mc-accent);
+  --color-accent-light: var(--mc-accent-light);
+  --color-accent-edge:  var(--mc-accent-edge);
+  --color-accent-hover: var(--mc-accent-hover);
+
+  /* Surfaces */
+  --color-surface:       var(--mc-surface);
+  --color-surface-hover: var(--mc-surface-hover);
+
+  /* Text */
+  --color-heading: var(--mc-heading);
+  --color-body:    var(--mc-body);
+  --color-caption: var(--mc-caption);
+  --color-hint:    var(--mc-hint);
+
+  /* Borders */
+  --color-edge:      var(--mc-edge);
+  --color-edge-soft: var(--mc-edge-soft);
+  --color-field:     var(--mc-field);
+
+  /* Semantic */
+  --color-danger:        var(--mc-danger);
+  --color-danger-light:  var(--mc-danger-light);
+  --color-danger-muted:  var(--mc-danger-muted);
+  --color-warning:       var(--mc-warning);
+  --color-warning-light: var(--mc-warning-light);
+  --color-warning-muted: var(--mc-warning-muted);
+
+  /* Disabled */
+  --color-disabled:      var(--mc-disabled-bg);
+  --color-disabled-text: var(--mc-disabled-text);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--mc-bg-page);
+  color: var(--mc-heading);
   font-family: Arial, Helvetica, sans-serif;
 }
 
@@ -31,37 +70,32 @@ html, body {
 
 /* ===== Golf Scorecard Notation ===== */
 
-/* Eagle or better: double circle */
 .score-eagle {
-  color: #b45309;
-  border: 2px solid #d97706;
+  color: var(--mc-score-eagle);
+  border: 2px solid var(--mc-score-eagle-border);
   border-radius: 9999px;
-  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #d97706;
+  box-shadow: 0 0 0 2px transparent, 0 0 0 4px var(--mc-score-eagle-border);
 }
 
-/* Birdie: single circle */
 .score-birdie {
-  color: #dc2626;
-  border: 2px solid #dc2626;
+  color: var(--mc-score-birdie);
+  border: 2px solid var(--mc-score-birdie);
   border-radius: 9999px;
 }
 
-/* Par: clean, no decoration */
 .score-par {
-  color: #374151;
+  color: var(--mc-score-par);
 }
 
-/* Bogey: single square */
 .score-bogey {
-  color: #0284c7;
-  border: 2px solid #0284c7;
+  color: var(--mc-score-bogey);
+  border: 2px solid var(--mc-score-bogey);
   border-radius: 2px;
 }
 
-/* Double bogey or worse: double square */
 .score-double {
-  color: #0284c7;
-  border: 2px solid #0284c7;
+  color: var(--mc-score-bogey);
+  border: 2px solid var(--mc-score-bogey);
   border-radius: 2px;
-  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #0284c7;
+  box-shadow: 0 0 0 2px transparent, 0 0 0 4px var(--mc-score-bogey);
 }
