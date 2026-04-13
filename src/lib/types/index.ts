@@ -104,7 +104,7 @@ export interface RoundState {
 
 // --- Caddie ---
 
-export type CaddiePersonality = 'zen_guru' | 'old_sage' | 'tough_love' | 'comforting_friend';
+export type CaddiePersonality = 'pro_jock';
 export type CaddieMode = 'voice' | 'chat';
 
 export interface CaddieContext {

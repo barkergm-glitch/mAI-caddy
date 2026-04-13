@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { CaddiePersonality, CourseData, HoleData } from '@/lib/types';
-import { DEMO_PROFILE, PERSONALITY_OPTIONS, SUGGESTED_PROMPTS, UI_MESSAGES, API_SETTINGS } from '@/lib/config';
+import { CourseData, HoleData } from '@/lib/types';
+import { DEMO_PROFILE, SUGGESTED_PROMPTS, UI_MESSAGES, API_SETTINGS } from '@/lib/config';
 import { useVoice } from '@/lib/hooks/use-voice';
 import Scorecard, { PlayerScore } from '@/components/Scorecard';
 
@@ -41,7 +41,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [personality, setPersonality] = useState<CaddiePersonality>('zen_guru');
+  const personality = 'pro_jock' as const;
   const [mode, setMode] = useState<'chat' | 'voice'>('chat');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -90,14 +90,13 @@ export default function Home() {
   // Refs to access latest state in voice callbacks
   const messagesRef = useRef<Message[]>([]);
   const modeRef = useRef(mode);
-  const personalityRef = useRef(personality);
+  const personalityRef = useRef(personality); // constant but ref keeps API callback stable
   const selectedCourseRef = useRef(selectedCourse);
   const currentHoleRef = useRef(currentHole);
   const isLoadingRef = useRef(false);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { personalityRef.current = personality; }, [personality]);
   useEffect(() => { selectedCourseRef.current = selectedCourse; }, [selectedCourse]);
   useEffect(() => { currentHoleRef.current = currentHole; }, [currentHole]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
@@ -304,7 +303,7 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Controls row: course + scorecard + personality — wraps on mobile */}
+          {/* Controls row: course + scorecard — wraps on mobile */}
           <div className="flex items-center gap-2 flex-wrap">
             {/* Course Button */}
             <button
@@ -331,19 +330,6 @@ export default function Home() {
                 📋 Card
               </button>
             )}
-
-            {/* Personality Picker */}
-            <select
-              value={personality}
-              onChange={(e) => setPersonality(e.target.value as CaddiePersonality)}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs sm:text-sm text-gray-200 focus:outline-none focus:border-green-500"
-            >
-              {PERSONALITY_OPTIONS.map(p => (
-                <option key={p.value} value={p.value}>
-                  {p.emoji} {p.label}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
 
@@ -680,7 +666,7 @@ export default function Home() {
         <p className="text-center text-xs text-gray-600 mt-1.5">
           {DEMO_PROFILE.name} · {DEMO_PROFILE.handicap} hcp
           {selectedCourse && ` · Hole ${currentHole}`}
-          {' · '}{personality.replace('_', ' ')}
+          {' · Pro Jock'}
         </p>
       </footer>
     </div>
