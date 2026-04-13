@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { CaddiePersonality, CourseData, HoleData } from '@/lib/types';
 import { DEMO_PROFILE, PERSONALITY_OPTIONS, SUGGESTED_PROMPTS, UI_MESSAGES, API_SETTINGS } from '@/lib/config';
 import { useVoice } from '@/lib/hooks/use-voice';
+import Scorecard, { PlayerScore } from '@/components/Scorecard';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -15,6 +16,25 @@ interface CourseSearchResult {
   name: string;
   city?: string;
   state?: string;
+}
+
+// Parse voice score commands like "Dave hole 5 scored a 6" or "Mike got a 4 on hole 3"
+function parseScoreCommand(text: string): { name: string; hole: number; score: number } | null {
+  const lower = text.toLowerCase();
+
+  // Pattern: "[name] hole [n] scored/got/made [a] [n]"
+  const p1 = lower.match(/(\w+)\s+hole\s+(\d+)\s+(?:scored|got|made|shot)\s+(?:a\s+)?(\d+)/);
+  if (p1) return { name: p1[1], hole: parseInt(p1[2]), score: parseInt(p1[3]) };
+
+  // Pattern: "[name] got/scored/made [a] [n] on hole [n]"
+  const p2 = lower.match(/(\w+)\s+(?:got|scored|made|shot)\s+(?:a\s+)?(\d+)\s+on\s+hole\s+(\d+)/);
+  if (p2) return { name: p2[1], hole: parseInt(p2[3]), score: parseInt(p2[2]) };
+
+  // Pattern: "hole [n] [name] [n]" (shorthand)
+  const p3 = lower.match(/hole\s+(\d+)\s+(\w+)\s+(\d+)/);
+  if (p3) return { name: p3[2], hole: parseInt(p3[1]), score: parseInt(p3[3]) };
+
+  return null;
 }
 
 export default function Home() {
@@ -32,6 +52,40 @@ export default function Home() {
   const [selectedCourse, setSelectedCourse] = useState<CourseData | null>(null);
   const [currentHole, setCurrentHole] = useState(1);
   const [showCoursePanel, setShowCoursePanel] = useState(false);
+
+  // Scorecard state
+  const [players, setPlayers] = useState<PlayerScore[]>([
+    { name: DEMO_PROFILE.name, handicap: DEMO_PROFILE.handicap ?? 15, scores: {} },
+  ]);
+  const [showScorecard, setShowScorecard] = useState(false);
+  const playersRef = useRef(players);
+  useEffect(() => { playersRef.current = players; }, [players]);
+
+  // Try to parse score commands from user messages before sending to API
+  const tryParseScore = useCallback((text: string): boolean => {
+    const parsed = parseScoreCommand(text);
+    if (!parsed) return false;
+
+    setPlayers(prev => {
+      const updated = [...prev];
+      // Find player by name (case-insensitive first match)
+      let playerIdx = updated.findIndex(p =>
+        p.name.toLowerCase().startsWith(parsed.name.toLowerCase())
+      );
+      // If not found, add them as a new player (they told the caddy about someone new)
+      if (playerIdx === -1) {
+        const capitalized = parsed.name.charAt(0).toUpperCase() + parsed.name.slice(1);
+        updated.push({ name: capitalized, handicap: 15, scores: {} });
+        playerIdx = updated.length - 1;
+      }
+      updated[playerIdx] = {
+        ...updated[playerIdx],
+        scores: { ...updated[playerIdx].scores, [parsed.hole]: parsed.score },
+      };
+      return updated;
+    });
+    return true;
+  }, []);
 
   // Refs to access latest state in voice callbacks
   const messagesRef = useRef<Message[]>([]);
@@ -51,6 +105,9 @@ export default function Home() {
   // Core send logic (shared by text and voice)
   const sendToAPI = useCallback(async (userMessage: string) => {
     if (!userMessage.trim() || isLoadingRef.current) return;
+
+    // Try to parse as a score command first (still send to API for caddy confirmation)
+    tryParseScore(userMessage);
 
     const trimmed = userMessage.trim();
     setMessages(prev => [...prev, { role: 'user', content: trimmed }]);
@@ -169,6 +226,7 @@ export default function Home() {
         setCourseSearch('');
         setCourseResults([]);
         setShowCoursePanel(false);
+        setShowScorecard(true);
 
         const holeName = data.course.holes?.[0];
         const announcement = `Loaded ${data.course.name}${data.course.city ? ` in ${data.course.city}${data.course.state ? ', ' + data.course.state : ''}` : ''}. ${data.course.holes?.length || 0} holes ready. You're on hole 1 — par ${holeName?.par || 4}, ${holeName?.yardage || '???'} yards. What do you need?`;
@@ -246,7 +304,7 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Controls row: course + personality — wraps on mobile */}
+          {/* Controls row: course + scorecard + personality — wraps on mobile */}
           <div className="flex items-center gap-2 flex-wrap">
             {/* Course Button */}
             <button
@@ -259,6 +317,20 @@ export default function Home() {
             >
               {selectedCourse ? `⛳ ${selectedCourse.name.substring(0, 15)}` : `⛳ ${UI_MESSAGES.selectCourse}`}
             </button>
+
+            {/* Scorecard Toggle — only shows when course is selected */}
+            {selectedCourse && (
+              <button
+                onClick={() => setShowScorecard(!showScorecard)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+                  showScorecard
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-800 text-gray-300 border border-gray-700'
+                }`}
+              >
+                📋 Card
+              </button>
+            )}
 
             {/* Personality Picker */}
             <select
@@ -402,6 +474,27 @@ export default function Home() {
           </div>
         )}
       </header>
+
+      {/* Scorecard — sits between header and messages when visible */}
+      {showScorecard && selectedCourse && (
+        <div className="shrink-0 px-4 py-2 sm:px-6">
+          <div className="max-w-3xl mx-auto">
+            <Scorecard
+              course={selectedCourse}
+              currentHole={currentHole}
+              players={players}
+              onHoleTap={(hole) => {
+                setCurrentHole(hole);
+                const h = selectedCourse.holes.find(h => h.holeNumber === hole);
+                if (h) {
+                  const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards.`;
+                  setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <main className="flex-1 min-h-0 overflow-y-auto px-4 py-3 sm:px-6 sm:py-4">

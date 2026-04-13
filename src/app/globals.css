@@ -35,3 +35,40 @@ html, body {
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
 }
+
+/* ===== Golf Scorecard Notation ===== */
+
+/* Eagle or better: double circle */
+.score-eagle {
+  color: #facc15;
+  border: 2px solid #facc15;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #facc15;
+}
+
+/* Birdie: single circle */
+.score-birdie {
+  color: #f87171;
+  border: 2px solid #f87171;
+  border-radius: 9999px;
+}
+
+/* Par: clean, no decoration */
+.score-par {
+  color: #e5e7eb;
+}
+
+/* Bogey: single square */
+.score-bogey {
+  color: #60a5fa;
+  border: 2px solid #60a5fa;
+  border-radius: 2px;
+}
+
+/* Double bogey or worse: double square */
+.score-double {
+  color: #60a5fa;
+  border: 2px solid #60a5fa;
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px transparent, 0 0 0 4px #60a5fa;
+}
