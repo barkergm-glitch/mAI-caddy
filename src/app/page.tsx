@@ -354,7 +354,10 @@ export default function Home() {
 
   /**
    * Commit a score for a player at a hole and clear any running stroke
-   * tally + pending confirmation for that hole.
+   * tally + pending confirmation for that hole. If the committed hole
+   * matches the current hole and there's a next hole on the course,
+   * auto-advance to it — the natural completion of the "X, right?" /
+   * "yes" flow.
    */
   const commitScore = useCallback((playerName: string, hole: number, score: number) => {
     setPlayers(prev => prev.map(p => {
@@ -367,6 +370,12 @@ export default function Home() {
       return next;
     });
     setPendingScore(prev => (prev && prev.hole === hole ? null : prev));
+
+    // Auto-advance to the next hole if we just scored the current one.
+    const course = selectedCourseRef.current;
+    if (course && hole === currentHoleRef.current && hole < course.holes.length) {
+      setCurrentHole(hole + 1);
+    }
   }, []);
 
   /**
@@ -383,9 +392,17 @@ export default function Home() {
     const primary = playersRef.current[0]?.name ?? DEMO_PROFILE.name;
     const pending = pendingScoreRef.current;
 
-    // --- 1. If there's a pending "X, right?" prompt, check this reply ---
-    if (pending && pending.hole === hole) {
-      // Explicit number in reply → use that
+    // Detect stroke signals FIRST so we can decide whether the message is
+    // a new shot description vs. a reply to an outstanding "X, right?".
+    const ev = detectStrokeEvents(text);
+    const looksLikeShotDescription =
+      ev.shots > 0 || ev.penalties > 0 || ev.holeComplete;
+
+    // --- 1. Pending "X, right?" reply handling ---
+    // Only treat the message as a confirmation/correction if it's NOT a
+    // shot description. "two putted" should add 2 strokes, not commit
+    // a score of 2.
+    if (pending && pending.hole === hole && !looksLikeShotDescription) {
       const correction = extractCorrectionNumber(text);
       if (correction !== null) {
         commitScore(pending.playerName, pending.hole, correction);
@@ -394,7 +411,6 @@ export default function Home() {
           confirmationMsg: `Got it — ${correction} on hole ${pending.hole}. On to the next.`,
         };
       }
-      // Plain affirmation → commit the pending count
       if (isAffirmative(text)) {
         commitScore(pending.playerName, pending.hole, pending.strokes);
         return {
@@ -402,7 +418,6 @@ export default function Home() {
           confirmationMsg: `${pending.strokes} locked in.`,
         };
       }
-      // Plain negation → keep pending and ask
       if (isNegative(text)) {
         setPendingScore(null);
         return {
@@ -413,8 +428,7 @@ export default function Home() {
       // Otherwise fall through: the user moved on without confirming.
     }
 
-    // --- 2. Detect stroke signals from the utterance ---
-    const ev = detectStrokeEvents(text);
+    // --- 2. Use the stroke signals we already extracted ---
     if (ev.shots === 0 && ev.penalties === 0 && !ev.holeComplete && ev.reportedScore === null) {
       return { handled: false };
     }
@@ -956,7 +970,7 @@ export default function Home() {
                 {holeData.strokeIndex && (
                   <span className="text-gray-500">SI {holeData.strokeIndex}</span>
                 )}
-                {(holeStrokes[currentHole] || 0) > 0 && !pendingScore && (
+                {(holeStrokes[currentHole] || 0) > 0 && !(pendingScore && pendingScore.hole === currentHole) && (
                   <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
                     ● {holeStrokes[currentHole]} shot{holeStrokes[currentHole] === 1 ? '' : 's'}
                   </span>
