@@ -65,13 +65,23 @@ const HOLE_COMPLETE_PHRASES = [
   'holed out', 'holed it',
   'drained it', 'drained', 'sunk it', 'sunk', 'sank it',
   'buried it', 'poured it in',
-  'tap in', 'tapped in', 'tap-in',
+  'tap in', 'tapped in', 'tap-in', 'tap it in', 'tapped it in',
+  'knock it in', 'knocked it in', 'putted in', 'knocked in',
   'picked up', 'pick up', 'pick it up',
   'concede', 'conceded',
   'gimme', 'given', 'give me that',
-  'that\'s good', 'thats good',
+  "that's good", 'thats good',
   'finish the hole', 'finished the hole', 'hole complete', 'done with the hole',
   'walked off', 'walk off',
+];
+
+// "Advance the counter without describing the shot" phrases
+const ADVANCE_PHRASES = [
+  'next shot', 'another shot', 'another one',
+  'second shot', 'third shot', 'fourth shot', 'fifth shot', 'sixth shot',
+  'plus one', 'plus 1', '+1',
+  'one more', 'one more shot',
+  'add a stroke', 'add stroke', 'count one',
 ];
 
 const PENALTY_PHRASES = [
@@ -145,12 +155,47 @@ export function detectStrokeEvents(text: string): StrokeEvents {
   // If there were no verb hits but clubs were mentioned, count as 1 shot
   if (shots === 0 && clubHits > 0) shots = 1;
 
+  // "two-putted" / "three-putted" / "2-putted" — count each putt.
+  const puttedMatch = lower.match(/(\d+|one|two|three|four|five)[\s-]*putt(?:ed|s)?/);
+  if (puttedMatch) {
+    const raw = puttedMatch[1];
+    const n = NUMBER_WORDS[raw] ?? parseInt(raw, 10);
+    if (!isNaN(n) && n > 0 && n <= 10) {
+      // Replace any single "putt" verb hit with the explicit count
+      const baseVerbsWithoutPutt = Math.max(0, verbHits - 1);
+      shots = baseVerbsWithoutPutt + n;
+      if (shots === 0 && clubHits > 0) shots = n;
+      if (shots === 0) shots = n;
+    }
+  }
+
+  // "N putts" ("made 3 putts", "two putts to finish")
+  const nPuttsMatch = lower.match(/\b(\d+|one|two|three|four|five)\s+putts\b/);
+  if (!puttedMatch && nPuttsMatch) {
+    const raw = nPuttsMatch[1];
+    const n = NUMBER_WORDS[raw] ?? parseInt(raw, 10);
+    if (!isNaN(n) && n > 0 && n <= 10) {
+      const baseVerbsWithoutPutt = Math.max(0, verbHits - 1);
+      shots = baseVerbsWithoutPutt + n;
+      if (shots === 0) shots = n;
+    }
+  }
+
   // Multi-clause clue: "then" / "and then" splits typically indicate
-  // multiple shots even without enough verb hits (e.g., "driver then 7-iron").
-  if (clubHits >= 2 && shots <= 1) {
-    const segments = lower.split(/\s+(?:then|and then|followed by|next)\s+/);
+  // multiple shots (e.g., "driver then 7-iron then chip").
+  if (clubHits >= 2 || verbHits >= 2) {
+    const segments = lower.split(/\s+(?:then|and then|followed by|next|,)\s+/);
     if (segments.length > 1) {
       shots = Math.max(shots, segments.length);
+    }
+  }
+
+  // "next shot" / "another shot" / "+1" — advance counter without a
+  // shot description. Only counts as +1 (not stacking with verbs).
+  for (const p of ADVANCE_PHRASES) {
+    if (lower.includes(p)) {
+      shots = Math.max(shots, 1);
+      break;
     }
   }
 

@@ -36,17 +36,27 @@ declare global {
 
 export type VoiceStatus = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 
+export interface TranscriptContext {
+  /**
+   * True when the utterance had no wake word and wasn't inside a reply
+   * window — i.e., the user is just describing a shot out loud. The
+   * page can feed these to the stroke counter without routing them
+   * through the caddy API.
+   */
+  ambient: boolean;
+}
+
 interface UseVoiceOptions {
-  onTranscript?: (text: string) => void;
+  onTranscript?: (text: string, ctx?: TranscriptContext) => void;
   onSpeechEnd?: () => void;
   lang?: string;
   autoSend?: boolean;
   /**
    * Hands-free mode. When true, the hook runs speech recognition
-   * continuously, filters for a wake word (default: "caddy" /
-   * "caddie" / "caddi" / "katie"), strips it, and fires onTranscript
-   * with the command that follows. Utterances without the wake word
-   * are ignored.
+   * continuously. Commands to the caddy are gated by a wake word
+   * ("Caddy"). Other utterances are still forwarded but marked
+   * { ambient: true } so the caller can process them locally (for
+   * example, feed shot descriptions to a stroke counter).
    */
   handsFree?: boolean;
   /** Override or extend the wake-word list. Matched case-insensitively. */
@@ -72,10 +82,25 @@ interface UseVoiceReturn {
 }
 
 const DEFAULT_WAKE_WORDS = [
-  'caddy', 'caddie', 'caddi',
-  'katie', 'cadi', 'kati', // common ASR mishears
-  'maicaddy', 'my caddy', 'my caddie',
+  'caddy', 'caddie',
+  'my caddy', 'my caddie',
+  // Common ASR mishears — only include whole-word forms, not short stems
+  // that could collide with ambient speech.
+  'katie',
 ];
+
+/**
+ * Does the caddy's utterance look like a question the user would answer?
+ * Matches '?' or common question-opening words, and the specific "X, right?"
+ * confirmation prompts so score replies don't need a wake word.
+ */
+function looksLikeQuestion(text: string): boolean {
+  if (!text) return false;
+  if (text.includes('?')) return true;
+  const lower = text.toLowerCase().trim();
+  if (/,\s*right\s*\??$/.test(lower)) return true; // "4, right?"
+  return /^(what|which|how|want|need|should|do you|did you|ready)/.test(lower);
+}
 
 /** Strip a leading wake word from a transcript; return the remainder or null. */
 function extractAfterWakeWord(text: string, wakeWords: string[]): string | null {
@@ -111,9 +136,10 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // wakeArmed = last utterance contained just the wake word, so next
-  // utterance (without wake word) is also accepted as a command.
-  const [wakeArmed, setWakeArmed] = useState(false);
+  // wakeArmed is exposed for UI compatibility but no longer flips in
+  // strict wake-word mode. Kept false; UI treats "listening" as the
+  // passive state.
+  const wakeArmed = false;
 
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
@@ -125,6 +151,11 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
   const wakeWordsRef = useRef(wakeWords);
   const wakeArmedRef = useRef(false);
   const statusRef = useRef<VoiceStatus>('idle');
+  // Reply window: when the caddy asks a question, the user gets a short
+  // window to answer without having to say "Caddy" first. Set from
+  // inside speak() on question-shaped utterances; auto-expires.
+  const followUpArmedRef = useRef(false);
+  const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True while TTS is playing — we pause the recognizer so it doesn't
   // pick up the caddy's own voice and loop on itself.
   const isSpeakingRef = useRef(false);
@@ -212,31 +243,45 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
       setInterimTranscript('');
 
       if (!handsFreeRef.current) {
-        // Push-to-talk: forward every finalized utterance.
-        onTranscriptRef.current?.(trimmed);
+        // Push-to-talk: forward every finalized utterance as a full command.
+        onTranscriptRef.current?.(trimmed, { ambient: false });
         return;
       }
 
-      // --- Hands-free wake-word gating ---
+      // --- Hands-free routing ---
+      // Rule of thumb:
+      //   - "Caddy <cmd>"           -> full caddy command (non-ambient)
+      //   - Inside a reply window   -> full caddy command (non-ambient)
+      //   - "Caddy" alone           -> ignored (must say command with it)
+      //   - Anything else           -> forwarded as { ambient: true } so the
+      //                                 page can run it through the stroke
+      //                                 counter without asking the caddy.
       const after = extractAfterWakeWord(trimmed, wakeWordsRef.current);
-      if (after === null) {
-        // No wake word in this utterance.
-        if (wakeArmedRef.current) {
-          // We were armed from a prior bare "caddy" — accept this as the command.
-          setWakeArmed(false);
-          onTranscriptRef.current?.(trimmed);
+
+      const clearFollowUp = () => {
+        if (followUpTimerRef.current) {
+          clearTimeout(followUpTimerRef.current);
+          followUpTimerRef.current = null;
         }
-        // Otherwise: ignore ambient speech.
+        followUpArmedRef.current = false;
+      };
+
+      if (after !== null && after.length > 0) {
+        clearFollowUp();
+        onTranscriptRef.current?.(after, { ambient: false });
         return;
       }
-      if (after.length === 0) {
-        // User said just "caddy" with no follow-up command yet.
-        setWakeArmed(true);
+      if (after !== null && after.length === 0) {
+        // Just "Caddy" on its own — ignore.
         return;
       }
-      // Wake word + command in one utterance.
-      setWakeArmed(false);
-      onTranscriptRef.current?.(after);
+      if (followUpArmedRef.current) {
+        clearFollowUp();
+        onTranscriptRef.current?.(trimmed, { ambient: false });
+        return;
+      }
+      // No wake word, no reply window — ambient. Page decides what to do.
+      onTranscriptRef.current?.(trimmed, { ambient: true });
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -332,7 +377,6 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
 
   const stopListening = useCallback(() => {
     shouldKeepListeningRef.current = false;
-    setWakeArmed(false);
     recognitionRef.current?.stop();
     isListeningRef.current = false;
     setStatus('idle');
@@ -346,8 +390,7 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
     } else {
       // don't stop if caller explicitly wants push-to-talk; they'll toggle
       shouldKeepListeningRef.current = false;
-      setWakeArmed(false);
-    }
+      }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handsFree]);
 
@@ -391,10 +434,23 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
         utterance.voice = preferred;
       }
 
+      // Did the caddy just ask a question? If so, open a short reply
+      // window after the speech finishes so the user can answer
+      // naturally ("Driver.") without prefacing with "Caddy".
+      const isQuestion = looksLikeQuestion(text);
+
       const finish = () => {
         utteranceRef.current = null;
         isSpeakingRef.current = false;
         setStatus('idle');
+        if (isQuestion && handsFreeRef.current) {
+          followUpArmedRef.current = true;
+          if (followUpTimerRef.current) clearTimeout(followUpTimerRef.current);
+          followUpTimerRef.current = setTimeout(() => {
+            followUpArmedRef.current = false;
+            followUpTimerRef.current = null;
+          }, 8000); // 8-second reply window
+        }
         // Wait a beat past the speaker tail before re-arming the mic
         // (otherwise we capture the last syllable and treat it as input).
         if (shouldKeepListeningRef.current && handsFreeRef.current) {
@@ -429,6 +485,11 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
         clearTimeout(restartTimerRef.current);
         restartTimerRef.current = null;
       }
+      if (followUpTimerRef.current) {
+        clearTimeout(followUpTimerRef.current);
+        followUpTimerRef.current = null;
+      }
+      followUpArmedRef.current = false;
       shouldKeepListeningRef.current = false;
       try { recognitionRef.current?.abort(); } catch { /* ignore */ }
       synthRef.current?.cancel();

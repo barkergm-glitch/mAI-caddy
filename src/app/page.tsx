@@ -569,13 +569,32 @@ export default function Home() {
   // Ref to hold speak function
   const speakRef = useRef<((text: string) => Promise<void>) | undefined>(undefined);
 
-  const handleTranscript = useCallback(async (text: string) => {
+  const handleTranscript = useCallback(async (text: string, ctx?: { ambient: boolean }) => {
     if (modeRef.current !== 'voice') return;
+
+    // Ambient utterances (no wake word, not in a caddy reply window):
+    // feed them to the stroke counter but do NOT call the caddy API.
+    // This lets the user narrate shots naturally ("hit driver", "tap in")
+    // without having to prefix every sentence with "Caddy".
+    if (ctx?.ambient) {
+      const result = processStrokeSignals(text);
+      if (result.confirmationMsg) {
+        // Show the user's ambient utterance and the caddy's confirm ask.
+        setMessages(prev => [
+          ...prev,
+          { role: 'user', content: text },
+          { role: 'assistant', content: result.confirmationMsg! },
+        ]);
+        if (speakRef.current) speakRef.current(result.confirmationMsg);
+      }
+      return;
+    }
+
     const reply = await sendToAPI(text);
     if (reply && speakRef.current) {
       speakRef.current(reply);
     }
-  }, [sendToAPI]);
+  }, [sendToAPI, processStrokeSignals]);
 
   // Hands-free (wake-word) mode. Persisted across reloads.
   const [handsFree, setHandsFree] = useState(false);
