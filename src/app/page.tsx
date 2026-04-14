@@ -9,6 +9,12 @@ import BetSetup from '@/components/BetSetup';
 import BetStatus from '@/components/BetStatus';
 import BetSettlement from '@/components/BetSettlement';
 import { BetConfig } from '@/lib/betting/types';
+import {
+  detectStrokeEvents,
+  isAffirmative,
+  isNegative,
+  extractCorrectionNumber,
+} from '@/lib/caddie/stroke-counter';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -26,6 +32,13 @@ interface CourseSearchResult {
 
 const ROUND_STORAGE_KEY = 'mai-caddy-round';
 
+interface PendingScore {
+  hole: number;
+  strokes: number;
+  /** Who the pending score is for — normally the primary golfer */
+  playerName: string;
+}
+
 interface SavedRound {
   course: CourseData;
   currentHole: number;
@@ -33,6 +46,10 @@ interface SavedRound {
   messages: Message[];
   bets: BetConfig[];
   startedAt: string; // ISO timestamp
+  /** Per-hole running stroke tally derived from the conversation */
+  holeStrokes?: Record<number, number>;
+  /** Pending "X, right?" confirmation, if any */
+  pendingScore?: PendingScore | null;
 }
 
 function saveRound(round: SavedRound) {
@@ -283,6 +300,14 @@ export default function Home() {
   const playersRef = useRef(players);
   useEffect(() => { playersRef.current = players; }, [players]);
 
+  // Stroke counter state
+  const [holeStrokes, setHoleStrokes] = useState<Record<number, number>>({});
+  const [pendingScore, setPendingScore] = useState<PendingScore | null>(null);
+  const holeStrokesRef = useRef(holeStrokes);
+  const pendingScoreRef = useRef(pendingScore);
+  useEffect(() => { holeStrokesRef.current = holeStrokes; }, [holeStrokes]);
+  useEffect(() => { pendingScoreRef.current = pendingScore; }, [pendingScore]);
+
   // Bet state
   const [bets, setBets] = useState<BetConfig[]>([]);
   const [showBetSetup, setShowBetSetup] = useState(false);
@@ -307,6 +332,8 @@ export default function Home() {
       setBets(saved.bets || []);
       setRoundStartedAt(saved.startedAt);
       setShowScorecard(true);
+      setHoleStrokes(saved.holeStrokes || {});
+      setPendingScore(saved.pendingScore ?? null);
     }
   }, []);
 
@@ -320,8 +347,97 @@ export default function Home() {
       messages: messages.slice(-50),
       bets,
       startedAt: roundStartedAt,
+      holeStrokes,
+      pendingScore,
     });
-  }, [selectedCourse, currentHole, players, messages, bets, roundStartedAt]);
+  }, [selectedCourse, currentHole, players, messages, bets, roundStartedAt, holeStrokes, pendingScore]);
+
+  /**
+   * Commit a score for a player at a hole and clear any running stroke
+   * tally + pending confirmation for that hole.
+   */
+  const commitScore = useCallback((playerName: string, hole: number, score: number) => {
+    setPlayers(prev => prev.map(p => {
+      if (p.name !== playerName) return p;
+      return { ...p, scores: { ...p.scores, [hole]: score } };
+    }));
+    setHoleStrokes(prev => {
+      const next = { ...prev };
+      delete next[hole];
+      return next;
+    });
+    setPendingScore(prev => (prev && prev.hole === hole ? null : prev));
+  }, []);
+
+  /**
+   * Run stroke detection on the user's message. Updates holeStrokes and,
+   * if the hole looks complete (or user reported a score), sets up a
+   * pendingScore with a "X, right?" assistant message so the user can
+   * confirm before we write to the scorecard.
+   *
+   * Returns true if the message was consumed (affirmation / correction
+   * of a pending score) and the assistant should NOT call the API for it.
+   */
+  const processStrokeSignals = useCallback((text: string): { handled: boolean; confirmationMsg?: string } => {
+    const hole = currentHoleRef.current;
+    const primary = playersRef.current[0]?.name ?? DEMO_PROFILE.name;
+    const pending = pendingScoreRef.current;
+
+    // --- 1. If there's a pending "X, right?" prompt, check this reply ---
+    if (pending && pending.hole === hole) {
+      // Explicit number in reply → use that
+      const correction = extractCorrectionNumber(text);
+      if (correction !== null) {
+        commitScore(pending.playerName, pending.hole, correction);
+        return {
+          handled: true,
+          confirmationMsg: `Got it — ${correction} on hole ${pending.hole}. On to the next.`,
+        };
+      }
+      // Plain affirmation → commit the pending count
+      if (isAffirmative(text)) {
+        commitScore(pending.playerName, pending.hole, pending.strokes);
+        return {
+          handled: true,
+          confirmationMsg: `${pending.strokes} locked in.`,
+        };
+      }
+      // Plain negation → keep pending and ask
+      if (isNegative(text)) {
+        setPendingScore(null);
+        return {
+          handled: true,
+          confirmationMsg: `My bad — what did you make?`,
+        };
+      }
+      // Otherwise fall through: the user moved on without confirming.
+    }
+
+    // --- 2. Detect stroke signals from the utterance ---
+    const ev = detectStrokeEvents(text);
+    if (ev.shots === 0 && ev.penalties === 0 && !ev.holeComplete && ev.reportedScore === null) {
+      return { handled: false };
+    }
+
+    // If user reported a final score explicitly ("I made a 5"), confirm it
+    if (ev.reportedScore !== null) {
+      setPendingScore({ hole, strokes: ev.reportedScore, playerName: primary });
+      return { handled: false, confirmationMsg: `${ev.reportedScore}, right?` };
+    }
+
+    // Increment the running tally
+    const prior = holeStrokesRef.current[hole] || 0;
+    const newTotal = prior + ev.shots + ev.penalties;
+    setHoleStrokes(prev => ({ ...prev, [hole]: newTotal }));
+
+    // If this utterance also signals hole completion, ask "X, right?"
+    if (ev.holeComplete) {
+      setPendingScore({ hole, strokes: newTotal, playerName: primary });
+      return { handled: false, confirmationMsg: `${newTotal}, right?` };
+    }
+
+    return { handled: false };
+  }, [commitScore]);
 
   // Try to parse score commands from user messages before sending to API
   const tryParseScore = useCallback((text: string): boolean => {
@@ -378,9 +494,29 @@ export default function Home() {
   const sendToAPI = useCallback(async (userMessage: string) => {
     if (!userMessage.trim() || isLoadingRef.current) return;
 
-    tryParseScore(userMessage);
-
     const trimmed = userMessage.trim();
+
+    // Stroke detection + pending-score confirmation runs BEFORE we hit the
+    // caddy API. If the message is just a yes/no to an outstanding "X,
+    // right?" prompt, we short-circuit and reply locally.
+    const strokeResult = processStrokeSignals(trimmed);
+
+    // Parallel: keep the existing explicit score-command parser so
+    // "Dave 6" / "birdie on 3" still work for multi-player groups.
+    tryParseScore(trimmed);
+
+    if (strokeResult.handled) {
+      setMessages(prev => [
+        ...prev,
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: strokeResult.confirmationMsg || 'Got it.' },
+      ]);
+      if (modeRef.current === 'voice' && strokeResult.confirmationMsg) {
+        // caller may also call speak() via its return value
+      }
+      return strokeResult.confirmationMsg;
+    }
+
     setMessages(prev => [...prev, { role: 'user', content: trimmed }]);
     setIsLoading(true);
 
@@ -404,14 +540,20 @@ export default function Home() {
             currentHole: hole,
             teeBox: 'white',
             scores: [],
-            shotNumber: 1,
+            shotNumber: (holeStrokesRef.current[hole] || 0) + 1,
             lie: 'tee',
           } : null,
         }),
       });
 
       const data = await response.json();
-      const reply = data.error ? UI_MESSAGES.connectionError : data.message;
+      let reply = data.error ? UI_MESSAGES.connectionError : data.message;
+
+      // If stroke detection produced a confirmation message ("5, right?"),
+      // append it so the caddy's response + the confirm ask flow together.
+      if (strokeResult.confirmationMsg) {
+        reply = `${reply}\n\n${strokeResult.confirmationMsg}`;
+      }
 
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
       return reply;
@@ -422,7 +564,7 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [processStrokeSignals]);
 
   // Ref to hold speak function
   const speakRef = useRef<((text: string) => Promise<void>) | undefined>(undefined);
@@ -546,6 +688,8 @@ export default function Home() {
     setRoundStartedAt(null);
     setShowScorecard(false);
     setShowCoursePanel(false);
+    setHoleStrokes({});
+    setPendingScore(null);
     setMode('chat');
     clearSavedRound();
   };
@@ -746,51 +890,102 @@ export default function Home() {
 
         {/* Active Hole Bar */}
         {selectedCourse && holeData && !showCoursePanel && (
-          <div className="max-w-3xl mx-auto mt-2 flex items-center gap-4 text-sm">
-            <button
-              onClick={() => {
-                if (currentHole > 1) {
-                  const newHole = currentHole - 1;
-                  setCurrentHole(newHole);
-                  const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
-                  if (h) {
-                    const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. Let's go.`;
-                    setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
-                    if (mode === 'voice') voice.speak(msg);
+          <div className="max-w-3xl mx-auto mt-2 space-y-1.5">
+            <div className="flex items-center gap-4 text-sm">
+              <button
+                onClick={() => {
+                  if (currentHole > 1) {
+                    const newHole = currentHole - 1;
+                    setCurrentHole(newHole);
+                    const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
+                    if (h) {
+                      const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. Let's go.`;
+                      setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+                      if (mode === 'voice') voice.speak(msg);
+                    }
                   }
-                }
-              }}
-              disabled={currentHole <= 1}
-              className="text-gray-400 hover:text-green-600 disabled:opacity-30"
-            >
-              ‹ Prev
-            </button>
-            <div className="flex items-center gap-3 text-gray-600">
-              <span className="text-green-700 font-bold">Hole {currentHole}</span>
-              <span>Par {holeData.par}</span>
-              <span>{holeData.yardage} yds</span>
-              {holeData.strokeIndex && (
-                <span className="text-gray-500">SI {holeData.strokeIndex}</span>
-              )}
+                }}
+                disabled={currentHole <= 1}
+                className="text-gray-400 hover:text-green-600 disabled:opacity-30"
+              >
+                ‹ Prev
+              </button>
+              <div className="flex items-center gap-3 text-gray-600">
+                <span className="text-green-700 font-bold">Hole {currentHole}</span>
+                <span>Par {holeData.par}</span>
+                <span>{holeData.yardage} yds</span>
+                {holeData.strokeIndex && (
+                  <span className="text-gray-500">SI {holeData.strokeIndex}</span>
+                )}
+                {(holeStrokes[currentHole] || 0) > 0 && !pendingScore && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                    ● {holeStrokes[currentHole]} shot{holeStrokes[currentHole] === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  // If there's an active stroke count for this hole and no
+                  // pending confirmation yet, turn it into "X, right?" instead
+                  // of silently advancing — that's the auto-count UX.
+                  const running = holeStrokes[currentHole] || 0;
+                  const primary = players[0]?.name ?? DEMO_PROFILE.name;
+                  const alreadyScored = players[0]?.scores[currentHole] !== undefined;
+                  if (running > 0 && !pendingScore && !alreadyScored) {
+                    setPendingScore({ hole: currentHole, strokes: running, playerName: primary });
+                    const ask = `${running}, right?`;
+                    setMessages(prev => [...prev, { role: 'assistant', content: ask }]);
+                    if (mode === 'voice') voice.speak(ask);
+                    return;
+                  }
+                  if (currentHole < selectedCourse.holes.length) {
+                    const newHole = currentHole + 1;
+                    setCurrentHole(newHole);
+                    const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
+                    if (h) {
+                      const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. What do you need?`;
+                      setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+                      if (mode === 'voice') voice.speak(msg);
+                    }
+                  }
+                }}
+                disabled={currentHole >= selectedCourse.holes.length && !pendingScore}
+                className="text-gray-400 hover:text-green-600 disabled:opacity-30"
+              >
+                Next ›
+              </button>
             </div>
-            <button
-              onClick={() => {
-                if (currentHole < selectedCourse.holes.length) {
-                  const newHole = currentHole + 1;
-                  setCurrentHole(newHole);
-                  const h = selectedCourse.holes.find(h => h.holeNumber === newHole);
-                  if (h) {
-                    const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards. What do you need?`;
+
+            {/* Pending "X, right?" confirmation strip */}
+            {pendingScore && pendingScore.hole === currentHole && (
+              <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 text-sm">
+                <span className="text-gray-700">
+                  Hole {pendingScore.hole}: <span className="font-bold text-green-700">{pendingScore.strokes}</span>, right?
+                </span>
+                <button
+                  onClick={() => {
+                    commitScore(pendingScore.playerName, pendingScore.hole, pendingScore.strokes);
+                    const ack = `${pendingScore.strokes} locked in.`;
+                    setMessages(prev => [...prev, { role: 'assistant', content: ack }]);
+                    if (mode === 'voice') voice.speak(ack);
+                  }}
+                  className="ml-auto px-2.5 py-0.5 rounded-md bg-green-600 text-white text-xs font-medium hover:bg-green-500"
+                >
+                  Yes
+                </button>
+                <button
+                  onClick={() => {
+                    setPendingScore(null);
+                    setShowScorecard(true);
+                    const msg = `Tap the ${pendingScore.playerName} cell for hole ${pendingScore.hole} to fix it.`;
                     setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
-                    if (mode === 'voice') voice.speak(msg);
-                  }
-                }
-              }}
-              disabled={currentHole >= selectedCourse.holes.length}
-              className="text-gray-400 hover:text-green-600 disabled:opacity-30"
-            >
-              Next ›
-            </button>
+                  }}
+                  className="px-2.5 py-0.5 rounded-md bg-white text-gray-600 border border-gray-300 text-xs font-medium hover:bg-gray-50"
+                >
+                  Fix
+                </button>
+              </div>
+            )}
           </div>
         )}
       </header>
