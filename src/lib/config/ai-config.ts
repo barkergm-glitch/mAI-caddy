@@ -9,10 +9,10 @@ export const AI_CONFIG = {
   model: 'claude-sonnet-4-6',
 
   /** Max tokens for voice mode (on-course: short, spoken responses) */
-  voiceMaxTokens: 150,
+  voiceMaxTokens: 60,
 
-  /** Max tokens for chat mode (off-course: richer, detailed responses) */
-  chatMaxTokens: 500,
+  /** Max tokens for chat mode (off-course: still minimal — one-line answers) */
+  chatMaxTokens: 120,
 
   /** Number of conversation messages to include for context */
   conversationHistoryLimit: 10,

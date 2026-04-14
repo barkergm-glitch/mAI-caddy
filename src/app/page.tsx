@@ -577,8 +577,22 @@ export default function Home() {
     }
   }, [sendToAPI]);
 
+  // Hands-free (wake-word) mode. Persisted across reloads.
+  const [handsFree, setHandsFree] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('mai-caddy-hands-free');
+      if (saved === '1') setHandsFree(true);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('mai-caddy-hands-free', handsFree ? '1' : '0'); } catch { /* ignore */ }
+    if (handsFree) setMode('voice');
+  }, [handsFree]);
+
   const voice = useVoice({
     onTranscript: handleTranscript,
+    handsFree,
   });
 
   useEffect(() => {
@@ -709,6 +723,12 @@ export default function Home() {
   const holeData = getCurrentHoleData();
 
   const getVoiceStatusText = () => {
+    if (handsFree) {
+      if (voice.wakeArmed) return 'Listening... go ahead';
+      if (voice.isListening) return 'Say "Caddy ..." to ask';
+      if (voice.isSpeaking) return 'Caddy is speaking...';
+      return 'Hands-free armed';
+    }
     switch (voice.status) {
       case 'listening': return 'Listening...';
       case 'speaking': return 'Caddy is speaking...';
@@ -1169,30 +1189,50 @@ export default function Home() {
       <footer className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 sm:px-6 sm:py-4 safe-bottom">
         {mode === 'voice' ? (
           <div className="max-w-3xl mx-auto flex flex-col items-center gap-2">
+            {/* Hands-free toggle */}
+            <button
+              type="button"
+              onClick={() => {
+                warmUpTTS();
+                setHandsFree(v => !v);
+              }}
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                handsFree
+                  ? 'bg-green-50 text-green-700 border-green-300'
+                  : 'bg-gray-50 text-gray-500 border-gray-300 hover:border-green-400'
+              }`}
+            >
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${handsFree ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+              {handsFree ? 'Hands-free ON · say "Caddy..."' : 'Hands-free OFF'}
+            </button>
+
             <div className="flex items-center gap-4">
               <button
                 onClick={() => {
                   warmUpTTS();
                   if (voice.isSpeaking) {
                     voice.stopSpeaking();
-                  } else if (voice.isListening) {
+                  } else if (voice.isListening && !handsFree) {
                     voice.stopListening();
-                  } else if (!isLoading) {
+                  } else if (!isLoading && !handsFree) {
                     voice.startListening();
                   }
                 }}
-                disabled={isLoading}
+                disabled={isLoading || handsFree}
+                title={handsFree ? 'Hands-free mode active — say "Caddy..." to talk' : ''}
                 className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center text-2xl sm:text-3xl transition-all duration-200 ${
-                  voice.isListening
-                    ? 'bg-red-500 hover:bg-red-400 scale-110 animate-pulse'
-                    : voice.isSpeaking
-                      ? 'bg-green-500 hover:bg-green-400 scale-105'
-                      : isLoading
-                        ? 'bg-gray-300 text-gray-500'
-                        : 'bg-green-600 hover:bg-green-500 hover:scale-105'
+                  handsFree
+                    ? 'bg-green-100 text-green-700 border-2 border-green-300 cursor-default'
+                    : voice.isListening
+                      ? 'bg-red-500 hover:bg-red-400 scale-110 animate-pulse'
+                      : voice.isSpeaking
+                        ? 'bg-green-500 hover:bg-green-400 scale-105'
+                        : isLoading
+                          ? 'bg-gray-300 text-gray-500'
+                          : 'bg-green-600 hover:bg-green-500 hover:scale-105'
                 }`}
               >
-                {voice.isListening ? '🔴' : voice.isSpeaking ? '🔊' : isLoading ? '⏳' : '🎤'}
+                {handsFree ? '👂' : voice.isListening ? '🔴' : voice.isSpeaking ? '🔊' : isLoading ? '⏳' : '🎤'}
               </button>
 
               <p className={`text-sm ${
