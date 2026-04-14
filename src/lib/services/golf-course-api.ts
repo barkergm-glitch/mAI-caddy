@@ -85,14 +85,30 @@ interface APICourseDetail {
 // --- Helpers ---
 
 /**
- * Pick the best tee box from the API response.
- * Prefers male tees, falls back to female. Returns the first tee set with holes.
+ * Unwrap the course payload. The GolfCourseAPI /v1/courses/{id} endpoint
+ * returns the course wrapped in a `course` envelope — older/alternate
+ * responses may return it flat. Handle both.
  */
-function pickBestTeeBox(tees?: APICourseDetail['tees']): APITeeBox | null {
+function unwrapCourse(raw: unknown): APICourseDetail {
+  if (!raw || typeof raw !== 'object') return {} as APICourseDetail;
+  const obj = raw as Record<string, unknown>;
+  if (obj.course && typeof obj.course === 'object') return obj.course as APICourseDetail;
+  return raw as APICourseDetail;
+}
+
+/**
+ * Pick the best tee box from the API response.
+ * Handles both the documented shape ({ male: [], female: [] }) and
+ * variants where `tees` is a flat array of tee boxes.
+ */
+function pickBestTeeBox(tees?: APICourseDetail['tees'] | APITeeBox[]): APITeeBox | null {
   if (!tees) return null;
 
-  // Try male tees first, then female
-  const candidates = [...(tees.male || []), ...(tees.female || [])];
+  // Flat array fallback (some responses return tees as a plain array)
+  const candidates: APITeeBox[] = Array.isArray(tees)
+    ? tees
+    : [...(tees.male || []), ...(tees.female || [])];
+
   // Prefer a tee box that actually has hole data
   return candidates.find(t => t.holes && t.holes.length > 0) || candidates[0] || null;
 }
@@ -143,16 +159,21 @@ export async function searchCourses(query: string): Promise<{
   }
 
   const data = await response.json();
-  const courses: APISearchCourse[] = data.courses || [];
+  // Response may be { courses: [...] } or a raw array
+  const courses: APISearchCourse[] = Array.isArray(data)
+    ? data
+    : (data.courses || data.results || []);
 
-  return courses.map(c => ({
-    id: String(c.id),
-    name: c.course_name || c.club_name || 'Unknown Course',
-    city: c.location?.city,
-    state: c.location?.state,
-    lat: c.location?.latitude,
-    lon: c.location?.longitude,
-  }));
+  return courses
+    .filter(c => c && c.id !== undefined)
+    .map(c => ({
+      id: String(c.id),
+      name: c.course_name || c.club_name || 'Unknown Course',
+      city: c.location?.city,
+      state: c.location?.state,
+      lat: c.location?.latitude,
+      lon: c.location?.longitude,
+    }));
 }
 
 /**
@@ -174,14 +195,31 @@ export async function getCourseDetails(courseId: string): Promise<CourseData> {
     throw new Error(`GolfCourseAPI error: ${response.status}`);
   }
 
-  const course: APICourseDetail = await response.json();
+  const raw = await response.json();
+  const course = unwrapCourse(raw);
 
   // Pick the best tee box and extract hole data
   const teeBox = pickBestTeeBox(course.tees);
   const holes = teeBox?.holes ? normalizeHoles(teeBox.holes) : [];
 
+  // One-time visibility in Netlify logs when detail lookups come back empty
+  if (!course.course_name && !course.club_name) {
+    console.warn('[GolfCourseAPI] detail response missing name fields', {
+      courseId,
+      topLevelKeys: Object.keys(raw || {}),
+      courseKeys: Object.keys(course || {}),
+    });
+  }
+  if (holes.length === 0) {
+    console.warn('[GolfCourseAPI] detail response missing holes', {
+      courseId,
+      teesType: Array.isArray(course.tees) ? 'array' : typeof course.tees,
+      teeBoxKeys: teeBox ? Object.keys(teeBox) : null,
+    });
+  }
+
   return {
-    id: String(course.id),
+    id: String(course.id ?? courseId),
     name: course.course_name || course.club_name || 'Unknown Course',
     city: course.location?.city,
     state: course.location?.state,
