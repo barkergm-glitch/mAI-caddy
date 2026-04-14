@@ -124,10 +124,16 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
   const handsFreeRef = useRef(handsFree);
   const wakeWordsRef = useRef(wakeWords);
   const wakeArmedRef = useRef(false);
+  const statusRef = useRef<VoiceStatus>('idle');
+  // True while TTS is playing — we pause the recognizer so it doesn't
+  // pick up the caddy's own voice and loop on itself.
+  const isSpeakingRef = useRef(false);
   // In hands-free mode we reuse one recognizer instance and keep
   // restarting it when it ends (browsers stop continuous recognition
   // after silence / tab blur).
   const shouldKeepListeningRef = useRef(false);
+  // Debounce repeated start attempts to prevent thrash.
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep callback refs current
   useEffect(() => {
@@ -138,6 +144,23 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
   useEffect(() => { handsFreeRef.current = handsFree; }, [handsFree]);
   useEffect(() => { wakeWordsRef.current = wakeWords; }, [wakeWords]);
   useEffect(() => { wakeArmedRef.current = wakeArmed; }, [wakeArmed]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+
+  /**
+   * Schedule a single restart of the recognizer; coalesces multiple
+   * onend / error events that all want to restart it at the same time.
+   */
+  const scheduleRestart = useCallback((delayMs: number) => {
+    if (restartTimerRef.current) return;
+    restartTimerRef.current = setTimeout(() => {
+      restartTimerRef.current = null;
+      if (!shouldKeepListeningRef.current) return;
+      if (isSpeakingRef.current) return; // hold off while TTS is going
+      const r = recognitionRef.current;
+      if (!r) return;
+      try { r.start(); } catch { /* already running */ }
+    }, delayMs);
+  }, []);
 
   // Check browser support
   const isSupported = typeof window !== 'undefined' &&
@@ -237,44 +260,43 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
 
     recognition.onend = () => {
       isListeningRef.current = false;
-      if (status !== 'error') {
+      if (statusRef.current !== 'error' && statusRef.current !== 'speaking') {
         setStatus('idle');
       }
       onSpeechEndRef.current?.();
 
       // In hands-free mode, the browser auto-stops after silence. Restart
-      // so the wake-word listener stays live for the whole round.
-      if (shouldKeepListeningRef.current && handsFreeRef.current) {
-        setTimeout(() => {
-          if (!shouldKeepListeningRef.current) return;
-          try {
-            recognitionRef.current?.start();
-          } catch {
-            // already running — ignore
-          }
-        }, 250);
+      // so the wake-word listener stays live for the whole round — but
+      // only if we're not currently speaking (otherwise we'd hear ourselves).
+      if (shouldKeepListeningRef.current && handsFreeRef.current && !isSpeakingRef.current) {
+        scheduleRestart(300);
       }
     };
 
     recognitionRef.current = recognition;
     return recognition;
-  }, [isSupported, lang, status]);
+  }, [isSupported, lang, scheduleRestart]);
 
   // If hands-free mode toggles while we're running, rebuild the recognizer
   // so `continuous` is applied correctly.
+  const isFirstHandsFreeChange = useRef(true);
   useEffect(() => {
-    if (!recognitionRef.current) return;
-    const wasRunning = isListeningRef.current || shouldKeepListeningRef.current;
-    try { recognitionRef.current.abort(); } catch { /* ignore */ }
-    recognitionRef.current = null;
-    if (wasRunning) {
-      // Restart on next tick with new config
-      setTimeout(() => {
-        const r = getRecognition();
-        try { r?.start(); } catch { /* ignore */ }
-      }, 100);
+    // Skip the very first run — the auto-start effect below handles initial setup.
+    if (isFirstHandsFreeChange.current) {
+      isFirstHandsFreeChange.current = false;
+      return;
     }
-  }, [handsFree, getRecognition]);
+    const wasRunning = isListeningRef.current || shouldKeepListeningRef.current;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch { /* ignore */ }
+      recognitionRef.current = null;
+    }
+    if (wasRunning) {
+      // Recreate with new continuous setting and restart
+      const r = getRecognition();
+      if (r) scheduleRestart(150);
+    }
+  }, [handsFree, getRecognition, scheduleRestart]);
 
   // Initialize speech synthesis
   useEffect(() => {
@@ -343,6 +365,15 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
     // Cancel any ongoing speech
     synthRef.current.cancel();
 
+    // In hands-free mode, pause the recognizer while the caddy is
+    // talking — otherwise the mic picks up the caddy's voice through
+    // the speakers and feedback-loops.
+    isSpeakingRef.current = true;
+    if (recognitionRef.current && isListeningRef.current) {
+      try { recognitionRef.current.abort(); } catch { /* ignore */ }
+      isListeningRef.current = false;
+    }
+
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
@@ -360,33 +391,46 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
         utterance.voice = preferred;
       }
 
+      const finish = () => {
+        utteranceRef.current = null;
+        isSpeakingRef.current = false;
+        setStatus('idle');
+        // Wait a beat past the speaker tail before re-arming the mic
+        // (otherwise we capture the last syllable and treat it as input).
+        if (shouldKeepListeningRef.current && handsFreeRef.current) {
+          scheduleRestart(450);
+        }
+        resolve();
+      };
+
       utterance.onstart = () => setStatus('speaking');
-      utterance.onend = () => {
-        setStatus('idle');
-        utteranceRef.current = null;
-        resolve();
-      };
-      utterance.onerror = () => {
-        setStatus('idle');
-        utteranceRef.current = null;
-        resolve();
-      };
+      utterance.onend = finish;
+      utterance.onerror = finish;
 
       utteranceRef.current = utterance;
       synthRef.current!.speak(utterance);
     });
-  }, [lang]);
+  }, [lang, scheduleRestart]);
 
   const stopSpeaking = useCallback(() => {
     synthRef.current?.cancel();
     utteranceRef.current = null;
+    isSpeakingRef.current = false;
     setStatus('idle');
-  }, []);
+    if (shouldKeepListeningRef.current && handsFreeRef.current) {
+      scheduleRestart(200);
+    }
+  }, [scheduleRestart]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      recognitionRef.current?.abort();
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
+      shouldKeepListeningRef.current = false;
+      try { recognitionRef.current?.abort(); } catch { /* ignore */ }
       synthRef.current?.cancel();
     };
   }, []);
