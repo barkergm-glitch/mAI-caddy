@@ -49,15 +49,30 @@ const SHOT_VERBS = [
 
 // Club mentions — when they're the ONLY signal in an utterance, we
 // count the utterance as one shot. (Avoids double-counting "hit driver".)
+// NOTE: tokenized matches; for spaced/hyphenated club names like
+// "7 iron" / "5 wood" we ALSO use CLUB_REGEX below to catch them.
 const CLUB_WORDS = [
-  'driver', 'wood', '3-wood', '5-wood', '3w', '5w',
-  'hybrid', '3h', '4h', '5h',
-  '3-iron', '4-iron', '5-iron', '6-iron', '7-iron', '8-iron', '9-iron',
+  'driver', 'iron', 'wood', 'hybrid', 'wedge', 'putter',
+  '3w', '5w', '3h', '4h', '5h',
   '3i', '4i', '5i', '6i', '7i', '8i', '9i',
-  'wedge', 'pw', 'gw', 'sw', 'lw',
-  'pitching wedge', 'gap wedge', 'sand wedge', 'lob wedge',
-  'putter',
+  'pw', 'gw', 'sw', 'lw',
+  '3-iron', '4-iron', '5-iron', '6-iron', '7-iron', '8-iron', '9-iron',
+  '3-wood', '5-wood',
 ];
+
+// Regex for spaced or hyphenated club names like "7 iron", "5-iron",
+// "5 wood", "3 hybrid", "pitching wedge", "an iron". Each match
+// counts as one club mention.
+const CLUB_REGEX = new RegExp(
+  '\\b(?:' +
+    // numbered woods/irons/hybrids/wedges with optional space or hyphen
+    '\\d{1,2}\\s*-?\\s*(?:iron|wood|hybrid|wedge)' +
+    '|' +
+    // multi-word wedges
+    '(?:pitching|gap|sand|lob)\\s+wedge' +
+  ')\\b',
+  'gi',
+);
 
 // Phrases signaling the hole is done
 const HOLE_COMPLETE_PHRASES = [
@@ -147,7 +162,11 @@ export function detectStrokeEvents(text: string): StrokeEvents {
   const tokens = tokenize(text);
 
   const verbHits = countOccurrences(tokens, SHOT_VERBS);
-  const clubHits = countOccurrences(tokens, CLUB_WORDS);
+  const clubTokenHits = countOccurrences(tokens, CLUB_WORDS);
+  const clubRegexHits = (lower.match(CLUB_REGEX) || []).length;
+  // De-dupe: regex matches may overlap with token matches (e.g., "7 iron"
+  // produces both "iron" token and a regex hit). Use the larger of the two.
+  const clubHits = Math.max(clubTokenHits, clubRegexHits);
 
   // Base shot count from verbs
   let shots = verbHits;
