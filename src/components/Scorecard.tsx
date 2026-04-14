@@ -17,6 +17,79 @@ interface ScorecardProps {
   currentHole: number;
   players: PlayerScore[];
   onHoleTap?: (holeNumber: number) => void;
+  /** Called when a player's score for a specific hole is changed via tap-to-edit. */
+  onScoreChange?: (playerName: string, holeNumber: number, score: number | null) => void;
+}
+
+// --- Tap-to-edit score picker ---
+interface ScoreCellProps {
+  score: number | undefined;
+  par: number;
+  onChange?: (score: number | null) => void;
+  sizeClass: string;
+}
+
+function ScoreCell({ score, par, onChange, sizeClass }: ScoreCellProps) {
+  const [open, setOpen] = useState(false);
+
+  if (!onChange) {
+    // Read-only rendering
+    return (
+      <span className={`inline-flex items-center justify-center ${sizeClass} font-medium ${getScoreStyle(score, par)}`}>
+        {getScoreLabel(score)}
+      </span>
+    );
+  }
+
+  const pick = (n: number | null) => { onChange(n); setOpen(false); };
+
+  // Options centered around par: par-2 .. par+4, clamped to 1..12
+  const options: number[] = [];
+  for (let n = Math.max(1, par - 2); n <= par + 4; n++) options.push(n);
+
+  return (
+    <span className="relative inline-block">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+        className={`inline-flex items-center justify-center ${sizeClass} font-medium rounded hover:ring-2 hover:ring-green-400 transition ${getScoreStyle(score, par)}`}
+      >
+        {getScoreLabel(score)}
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default bg-transparent"
+            aria-label="Close score picker"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-1 flex gap-0.5">
+            {options.map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); pick(n); }}
+                className={`w-7 h-7 text-xs rounded font-medium hover:bg-green-100 ${getScoreStyle(n, par)}`}
+              >
+                {n}
+              </button>
+            ))}
+            {score !== undefined && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); pick(null); }}
+                className="w-7 h-7 text-xs rounded font-medium text-gray-400 hover:bg-gray-100"
+                title="Clear"
+              >
+                −
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </span>
+  );
 }
 
 // --- Golf notation helpers ---
@@ -94,7 +167,7 @@ function NoHoleData({ course, currentHole }: { course: CourseData; currentHole: 
 
 // --- Portrait: 3 holes (prev 2 + current) ---
 
-function PortraitScorecard({ course, currentHole, players, onHoleTap }: ScorecardProps) {
+function PortraitScorecard({ course, currentHole, players, onHoleTap, onScoreChange }: ScorecardProps) {
   const visibleHoles = useMemo(() => {
     const holes: HoleData[] = [];
     for (let i = Math.max(1, currentHole - 2); i <= Math.min(currentHole, course.holes.length); i++) {
@@ -194,9 +267,12 @@ function PortraitScorecard({ course, currentHole, players, onHoleTap }: Scorecar
                     const score = player.scores[h.holeNumber];
                     return (
                       <td key={h.holeNumber} className={`py-1.5 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>
-                        <span className={`inline-flex items-center justify-center w-7 h-7 text-sm font-medium ${getScoreStyle(score, h.par)}`}>
-                          {getScoreLabel(score)}
-                        </span>
+                        <ScoreCell
+                          score={score}
+                          par={h.par}
+                          sizeClass="w-7 h-7 text-sm"
+                          onChange={onScoreChange ? (n) => onScoreChange(player.name, h.holeNumber, n) : undefined}
+                        />
                       </td>
                     );
                   })}
@@ -222,7 +298,7 @@ function PortraitScorecard({ course, currentHole, players, onHoleTap }: Scorecar
 
 // --- Landscape: 9 holes, swipeable front/back ---
 
-function LandscapeScorecard({ course, currentHole, players, onHoleTap }: ScorecardProps) {
+function LandscapeScorecard({ course, currentHole, players, onHoleTap, onScoreChange }: ScorecardProps) {
   const [showingNine, setShowingNine] = useState<'front' | 'back'>(currentHole <= 9 ? 'front' : 'back');
   const touchStartX = useRef(0);
 
@@ -351,9 +427,12 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap }: Scoreca
                     const score = player.scores[h.holeNumber];
                     return (
                       <td key={h.holeNumber} className={`py-0.5 ${h.holeNumber === currentHole ? 'bg-green-50' : ''}`}>
-                        <span className={`inline-flex items-center justify-center w-6 h-6 text-[11px] font-medium ${getScoreStyle(score, h.par)}`}>
-                          {getScoreLabel(score)}
-                        </span>
+                        <ScoreCell
+                          score={score}
+                          par={h.par}
+                          sizeClass="w-6 h-6 text-[11px]"
+                          onChange={onScoreChange ? (n) => onScoreChange(player.name, h.holeNumber, n) : undefined}
+                        />
                       </td>
                     );
                   })}

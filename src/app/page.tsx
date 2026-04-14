@@ -60,21 +60,131 @@ function clearSavedRound() {
   } catch { /* fail silently */ }
 }
 
-// Parse voice score commands like "Dave hole 5 scored a 6" or "Mike got a 4 on hole 3"
-function parseScoreCommand(text: string): { name: string; hole: number; score: number } | null {
-  const lower = text.toLowerCase();
+// Words like "a 5" → 5. Also accept spelled-out numbers ("five" → 5).
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
 
-  // Pattern: "[name] hole [n] scored/got/made [a] [n]"
+// Golf score terms relative to par
+const GOLF_TERMS: Record<string, number> = {
+  // par-relative offsets: value is strokes relative to par
+  ace: -999, // handled as 1 specifically
+  'hole in one': -999,
+  'hole-in-one': -999,
+  eagle: -2,
+  birdie: -1,
+  par: 0,
+  bogey: 1,
+  'double bogey': 2,
+  'double-bogey': 2,
+  'triple bogey': 3,
+  'triple-bogey': 3,
+};
+
+function wordToNumber(raw: string): number | null {
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  if (!isNaN(n)) return n;
+  const w = NUMBER_WORDS[raw.toLowerCase()];
+  return w ?? null;
+}
+
+/**
+ * Parse a score command. Defaults:
+ * - If no explicit hole number is mentioned, assume currentHole.
+ * - If no player name is mentioned, assume the first player (primary golfer).
+ * - Accepts golf terms like "par", "bogey", "birdie" (resolved using par for that hole).
+ *
+ * Examples that now work:
+ *   "I got a 5"           → primary, current hole, 5
+ *   "bogey"               → primary, current hole, par + 1
+ *   "birdie on 3"         → primary, hole 3, par(3) - 1
+ *   "Dave 6"              → Dave, current hole, 6
+ *   "hole 5 Mike 4"       → Mike, hole 5, 4
+ */
+function parseScoreCommand(
+  text: string,
+  ctx: { currentHole: number; holePar: number | undefined; primaryName: string; knownNames: string[] }
+): { name: string; hole: number; score: number } | null {
+  const lower = text.toLowerCase().trim();
+
+  // --- 1. Explicit patterns with name + hole + score ---
+
+  // "[name] hole [n] scored/got/made [a] [n]"
   const p1 = lower.match(/(\w+)\s+hole\s+(\d+)\s+(?:scored|got|made|shot)\s+(?:a\s+)?(\d+)/);
   if (p1) return { name: p1[1], hole: parseInt(p1[2]), score: parseInt(p1[3]) };
 
-  // Pattern: "[name] got/scored/made [a] [n] on hole [n]"
+  // "[name] got/scored/made [a] [n] on hole [n]"
   const p2 = lower.match(/(\w+)\s+(?:got|scored|made|shot)\s+(?:a\s+)?(\d+)\s+on\s+hole\s+(\d+)/);
   if (p2) return { name: p2[1], hole: parseInt(p2[3]), score: parseInt(p2[2]) };
 
-  // Pattern: "hole [n] [name] [n]" (shorthand)
+  // "hole [n] [name] [n]"
   const p3 = lower.match(/hole\s+(\d+)\s+(\w+)\s+(\d+)/);
   if (p3) return { name: p3[2], hole: parseInt(p3[1]), score: parseInt(p3[3]) };
+
+  // --- 2. Resolve a hole reference (explicit "hole N" or "on N") ---
+
+  let hole = ctx.currentHole;
+  const holeMatch = lower.match(/(?:on\s+)?hole\s+(\d+)/) || lower.match(/\bon\s+(\d{1,2})\b/);
+  if (holeMatch) hole = parseInt(holeMatch[1]);
+
+  // --- 3. Resolve a name (must be a known player; otherwise default to primary) ---
+
+  let name = ctx.primaryName;
+  const knownLower = ctx.knownNames.map(n => n.toLowerCase());
+  const words = lower.split(/\s+/);
+  const hitName = words.find(w => knownLower.includes(w));
+  if (hitName) name = hitName;
+
+  // "[name] X" where name is known (e.g., "dave 6")
+  // Handled by the hitName branch above.
+
+  // --- 4. Resolve a score ---
+
+  // Golf term (ace, eagle, birdie, par, bogey, double/triple bogey)
+  if (ctx.holePar !== undefined) {
+    // Two-word terms first
+    for (const term of ['hole in one', 'hole-in-one', 'double bogey', 'double-bogey', 'triple bogey', 'triple-bogey']) {
+      if (lower.includes(term)) {
+        if (term.startsWith('hole')) return { name, hole, score: 1 };
+        return { name, hole, score: ctx.holePar + GOLF_TERMS[term] };
+      }
+    }
+    // Single-word terms — require whole-word match to avoid matching "apart" containing "par"
+    const singleTerms = ['ace', 'eagle', 'birdie', 'par', 'bogey'];
+    const tokens = lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/);
+    for (const term of singleTerms) {
+      if (tokens.includes(term)) {
+        if (term === 'ace') return { name, hole, score: 1 };
+        return { name, hole, score: ctx.holePar + GOLF_TERMS[term] };
+      }
+    }
+  }
+
+  // Spoken verbs: "got a 5", "made 4", "shot a six"
+  const verbMatch = lower.match(/(?:got|scored|made|shot|took|had)\s+(?:a\s+|an\s+)?(\w+)/);
+  if (verbMatch) {
+    const n = wordToNumber(verbMatch[1]);
+    if (n !== null && n >= 1 && n <= 20) return { name, hole, score: n };
+  }
+
+  // Just "[name] [digit]" style (e.g., "dave 6") — only if name is a known player
+  if (hitName) {
+    const after = lower.split(hitName)[1] || '';
+    const numMatch = after.match(/\b(\d{1,2})\b/);
+    if (numMatch) {
+      const n = parseInt(numMatch[1]);
+      if (n >= 1 && n <= 20) return { name, hole, score: n };
+    }
+  }
+
+  // Bare single number as the whole utterance ("5", "six")
+  const bare = lower.match(/^(\w+)$/);
+  if (bare) {
+    const n = wordToNumber(bare[1]);
+    if (n !== null && n >= 1 && n <= 20) return { name, hole, score: n };
+  }
 
   return null;
 }
@@ -215,8 +325,21 @@ export default function Home() {
 
   // Try to parse score commands from user messages before sending to API
   const tryParseScore = useCallback((text: string): boolean => {
-    const parsed = parseScoreCommand(text);
+    const course = selectedCourseRef.current;
+    const hole = currentHoleRef.current;
+    const holePar = course?.holes.find(h => h.holeNumber === hole)?.par;
+    const current = playersRef.current;
+    const primary = current[0]?.name ?? DEMO_PROFILE.name;
+    const known = current.map(p => p.name);
+
+    const parsed = parseScoreCommand(text, {
+      currentHole: hole,
+      holePar,
+      primaryName: primary,
+      knownNames: known,
+    });
     if (!parsed) return false;
+    if (parsed.score < 1 || parsed.score > 20) return false;
 
     setPlayers(prev => {
       const updated = [...prev];
@@ -727,6 +850,15 @@ export default function Home() {
                   const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards.`;
                   setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
                 }
+              }}
+              onScoreChange={(playerName, holeNumber, score) => {
+                setPlayers(prev => prev.map(p => {
+                  if (p.name !== playerName) return p;
+                  const scores = { ...p.scores };
+                  if (score === null) delete scores[holeNumber];
+                  else scores[holeNumber] = score;
+                  return { ...p, scores };
+                }));
               }}
             />
           </div>
