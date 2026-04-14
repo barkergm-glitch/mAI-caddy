@@ -15,6 +15,7 @@ import {
   isNegative,
   extractCorrectionNumber,
 } from '@/lib/caddie/stroke-counter';
+import { useGeolocation, distanceYards } from '@/lib/hooks/use-geolocation';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -297,6 +298,25 @@ export default function Home() {
     { name: DEMO_PROFILE.name, handicap: DEMO_PROFILE.handicap ?? 15, scores: {} },
   ]);
   const [showScorecard, setShowScorecard] = useState(false);
+  const [selectedTeeName, setSelectedTeeName] = useState<string | undefined>(undefined);
+
+  // Default tee selection: prefer middle tee (typical white) for men,
+  // fall back to first tee with hole data when course loads.
+  useEffect(() => {
+    if (!selectedCourse?.tees || selectedCourse.tees.length === 0) {
+      setSelectedTeeName(undefined);
+      return;
+    }
+    if (selectedTeeName && selectedCourse.tees.some(t => t.name === selectedTeeName)) {
+      return; // current selection still valid
+    }
+    const maleTees = selectedCourse.tees.filter(t => t.sex !== 'female');
+    const pool = maleTees.length > 0 ? maleTees : selectedCourse.tees;
+    // Pick middle by total yardage (or middle by index if yardages missing)
+    const sorted = [...pool].sort((a, b) => (a.totalYards ?? 0) - (b.totalYards ?? 0));
+    const middle = sorted[Math.floor(sorted.length / 2)] ?? pool[0];
+    setSelectedTeeName(middle.name);
+  }, [selectedCourse, selectedTeeName]);
   const playersRef = useRef(players);
   useEffect(() => { playersRef.current = players; }, [players]);
 
@@ -391,6 +411,21 @@ export default function Home() {
     const hole = currentHoleRef.current;
     const primary = playersRef.current[0]?.name ?? DEMO_PROFILE.name;
     const pending = pendingScoreRef.current;
+    const advancePending = pendingAdvanceHoleRef.current;
+
+    // --- 0. Pending GPS advance prompt? "yes" advances; "no" cancels. ---
+    if (advancePending !== null) {
+      if (isAffirmative(text)) {
+        setCurrentHole(advancePending);
+        setPendingAdvanceHole(null);
+        return { handled: true, confirmationMsg: `Hole ${advancePending}.` };
+      }
+      if (isNegative(text)) {
+        setPendingAdvanceHole(null);
+        return { handled: true, confirmationMsg: `Got it, staying put.` };
+      }
+      // Otherwise fall through — user might be answering something else.
+    }
 
     // Detect stroke signals FIRST so we can decide whether the message is
     // a new shot description vs. a reply to an outstanding "X, right?".
@@ -549,10 +584,18 @@ export default function Home() {
           personality: personalityRef.current,
           conversationHistory: messagesRef.current.slice(-10),
           currentHole: holeData,
+          weather: weatherRef.current
+            ? {
+                temperatureF: weatherRef.current.temperatureF,
+                windSpeedMph: weatherRef.current.windSpeedMph,
+                windDirection: weatherRef.current.windDirection,
+                description: weatherRef.current.description,
+              }
+            : null,
           round: course ? {
             courseData: course,
             currentHole: hole,
-            teeBox: 'white',
+            teeBox: selectedTeeNameRef.current ?? 'white',
             scores: [],
             shotNumber: (holeStrokesRef.current[hole] || 0) + 1,
             lie: 'tee',
@@ -612,20 +655,135 @@ export default function Home() {
 
   // Hands-free (wake-word) mode. Persisted across reloads.
   const [handsFree, setHandsFree] = useState(false);
+  // Real Golf mode: GPS + weather + auto hands-free + slower TTS.
+  const [realGolf, setRealGolf] = useState(false);
+  // Weather snapshot for the loaded course (refreshed every ~10 min).
+  interface WeatherSnapshot {
+    temperatureF: number;
+    feelsLikeF: number;
+    windSpeedMph: number;
+    windDirection: string;
+    description: string;
+    icon?: string;
+    fetchedAt: number;
+  }
+  const [weather, setWeather] = useState<WeatherSnapshot | null>(null);
+  const weatherRef = useRef<WeatherSnapshot | null>(null);
+  useEffect(() => { weatherRef.current = weather; }, [weather]);
+  const selectedTeeNameRef = useRef<string | undefined>(undefined);
+  useEffect(() => { selectedTeeNameRef.current = selectedTeeName; }, [selectedTeeName]);
+
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('mai-caddy-hands-free');
-      if (saved === '1') setHandsFree(true);
+      const hf = localStorage.getItem('mai-caddy-hands-free');
+      if (hf === '1') setHandsFree(true);
+      const rg = localStorage.getItem('mai-caddy-real-golf');
+      if (rg === '1') setRealGolf(true);
     } catch { /* ignore */ }
   }, []);
   useEffect(() => {
     try { localStorage.setItem('mai-caddy-hands-free', handsFree ? '1' : '0'); } catch { /* ignore */ }
     if (handsFree) setMode('voice');
   }, [handsFree]);
+  useEffect(() => {
+    try { localStorage.setItem('mai-caddy-real-golf', realGolf ? '1' : '0'); } catch { /* ignore */ }
+    if (realGolf) {
+      // Real Golf forces hands-free on and voice mode active.
+      setHandsFree(true);
+      setMode('voice');
+    }
+  }, [realGolf]);
+
+  // Pull weather when Real Golf is on AND we have course coordinates.
+  useEffect(() => {
+    if (!realGolf) return;
+    const lat = selectedCourse?.lat;
+    const lon = selectedCourse?.lon;
+    if (lat == null || lon == null) return;
+
+    let cancelled = false;
+    const fetchWeather = async () => {
+      try {
+        const res = await fetch(`/api/weather?lat=${lat}&lon=${lon}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setWeather({
+          temperatureF: data.temperatureF,
+          feelsLikeF: data.feelsLikeF,
+          windSpeedMph: data.windSpeedMph,
+          windDirection: data.windDirection,
+          description: data.description,
+          icon: data.icon,
+          fetchedAt: Date.now(),
+        });
+      } catch { /* ignore */ }
+    };
+    fetchWeather();
+    const interval = setInterval(fetchWeather, 10 * 60 * 1000); // every 10 min
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [realGolf, selectedCourse?.lat, selectedCourse?.lon]);
+
+  // Pending hole-advance from a GPS proximity prompt. User confirms
+  // with "yes" (caught by the reply window) or via the inline button.
+  const [pendingAdvanceHole, setPendingAdvanceHole] = useState<number | null>(null);
+  const pendingAdvanceHoleRef = useRef<number | null>(null);
+  useEffect(() => { pendingAdvanceHoleRef.current = pendingAdvanceHole; }, [pendingAdvanceHole]);
+
+  // GPS in Real Golf. Tracks position so we can prompt to advance holes
+  // when the user has clearly walked off the current one.
+  const geo = useGeolocation({ enabled: realGolf, highAccuracy: true, throttleMs: 8000 });
+  const lastAdvancePromptAtRef = useRef<number>(0);
+  const lastHolePositionRef = useRef<{ lat: number; lon: number; hole: number } | null>(null);
+
+  // Reset the proximity baseline whenever currentHole changes
+  useEffect(() => {
+    if (geo.position) {
+      lastHolePositionRef.current = { lat: geo.position.lat, lon: geo.position.lon, hole: currentHole };
+    } else {
+      lastHolePositionRef.current = null;
+    }
+    setPendingAdvanceHole(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentHole]);
+
+  // Proximity prompt: when the user walks meaningfully past the hole's
+  // baseline position, ask if they want to advance. (Without per-hole
+  // coords from the data source we can't know exact pin distance, so we
+  // use displacement as a proxy.)
+  useEffect(() => {
+    if (!realGolf || !geo.position || !selectedCourse) return;
+    if (currentHole >= selectedCourse.holes.length) return;
+    if (pendingScoreRef.current && pendingScoreRef.current.hole === currentHole) return;
+    if (pendingAdvanceHoleRef.current !== null) return;
+
+    const baseline = lastHolePositionRef.current;
+    if (!baseline || baseline.hole !== currentHole) {
+      lastHolePositionRef.current = { lat: geo.position.lat, lon: geo.position.lon, hole: currentHole };
+      return;
+    }
+
+    const moved = distanceYards(baseline, geo.position);
+    if (moved < 250) return; // not far enough to be confident
+
+    const now = Date.now();
+    if (now - lastAdvancePromptAtRef.current < 60_000) return; // throttle prompts
+    lastAdvancePromptAtRef.current = now;
+
+    const next = currentHole + 1;
+    const nextPar = selectedCourse.holes.find(h => h.holeNumber === next)?.par;
+    const ask = nextPar
+      ? `Looks like you're walking. Hole ${next}, par ${nextPar} — heading there?`
+      : `Looks like you're walking. On to hole ${next}?`;
+    setMessages(prev => [...prev, { role: 'assistant', content: ask }]);
+    if (speakRef.current) speakRef.current(ask);
+    setPendingAdvanceHole(next);
+  }, [geo.position, realGolf, selectedCourse, currentHole]);
 
   const voice = useVoice({
     onTranscript: handleTranscript,
     handsFree,
+    ttsRate: realGolf ? 0.85 : 0.95,
   });
 
   useEffect(() => {
@@ -789,7 +947,31 @@ export default function Home() {
         <div className="max-w-3xl mx-auto">
           {/* Top row: logo + mode toggle */}
           <div className="flex items-center justify-between mb-2">
-            <h1 className="text-xl sm:text-2xl font-bold text-green-700">mAI Caddy</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-bold text-green-700">mAI Caddy</h1>
+              <button
+                onClick={() => setRealGolf(v => !v)}
+                title={realGolf
+                  ? 'Real Golf mode ON — GPS, weather, hands-free'
+                  : 'Desk mode — turn on to enable GPS / weather / hands-free for the course'}
+                className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${
+                  realGolf
+                    ? 'bg-green-50 text-green-700 border-green-400'
+                    : 'bg-gray-50 text-gray-500 border-gray-300 hover:border-green-400'
+                }`}
+              >
+                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${realGolf ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                {realGolf ? 'Real Golf' : 'Desk'}
+              </button>
+              {realGolf && weather && (
+                <span className="text-[11px] text-gray-500" title={weather.description}>
+                  {weather.temperatureF}° · {weather.windSpeedMph}mph {weather.windDirection}
+                </span>
+              )}
+              {realGolf && geo.error && (
+                <span className="text-[11px] text-amber-600" title={geo.error}>GPS off</span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {/* End Round button — only during active round */}
               {selectedCourse && (
@@ -1091,9 +1273,13 @@ export default function Home() {
               course={selectedCourse}
               currentHole={currentHole}
               players={players}
+              selectedTeeName={selectedTeeName}
+              onSelectTee={setSelectedTeeName}
               onHoleTap={(hole) => {
                 setCurrentHole(hole);
-                const h = selectedCourse.holes.find(h => h.holeNumber === hole);
+                const tee = selectedCourse.tees?.find(t => t.name === selectedTeeName);
+                const holes = tee?.holes ?? selectedCourse.holes;
+                const h = holes.find(h => h.holeNumber === hole);
                 if (h) {
                   const msg = `Hole ${h.holeNumber} — par ${h.par}, ${h.yardage} yards.`;
                   setMessages(prev => [...prev, { role: 'assistant', content: msg }]);

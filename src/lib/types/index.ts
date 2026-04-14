@@ -54,13 +54,33 @@ export interface HoleData {
   notes?: string;
 }
 
+export interface TeeBoxData {
+  /** Display name like "Black", "Blue", "White", "Red", "Gold" */
+  name: string;
+  /** Sex bucket from the API ("male" / "female") for color-coding etc. */
+  sex?: 'male' | 'female';
+  totalYards?: number;
+  parTotal?: number;
+  courseRating?: number;
+  slopeRating?: number;
+  bogeyRating?: number;
+  /** Per-hole yardage for this tee box (1-indexed by holeNumber) */
+  holes: HoleData[];
+}
+
 export interface CourseData {
   id: string;
   name: string;
   city?: string;
   state?: string;
   country?: string;
+  /** Course-center coordinates (clubhouse approx). Used for weather + at-course detection. */
+  lat?: number;
+  lon?: number;
+  /** Yardages on the active tee — kept for back-compat with existing UI. */
   holes: HoleData[];
+  /** All tee boxes returned by the data source. UI lets the user pick one. */
+  tees?: TeeBoxData[];
   courseRating?: number;
   slopeRating?: number;
   altitude?: number;          // feet above sea level

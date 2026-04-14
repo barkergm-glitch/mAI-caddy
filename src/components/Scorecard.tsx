@@ -19,6 +19,10 @@ interface ScorecardProps {
   onHoleTap?: (holeNumber: number) => void;
   /** Called when a player's score for a specific hole is changed via tap-to-edit. */
   onScoreChange?: (playerName: string, holeNumber: number, score: number | null) => void;
+  /** Currently selected tee name. If undefined, falls back to course.holes. */
+  selectedTeeName?: string;
+  /** Called when the user picks a different tee from the selector strip. */
+  onSelectTee?: (teeName: string) => void;
 }
 
 // --- Tap-to-edit score picker ---
@@ -128,23 +132,72 @@ function relativeDisplay(total: number | null, par: number): string {
   return d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`;
 }
 
+// --- Helpers ---
+
+/** Resolve which holes array to display for the chosen tee. Falls back to course.holes. */
+function getActiveHoles(course: CourseData, selectedTeeName?: string): HoleData[] {
+  if (!selectedTeeName || !course.tees) return course.holes;
+  const tee = course.tees.find(t => t.name === selectedTeeName);
+  return tee?.holes && tee.holes.length > 0 ? tee.holes : course.holes;
+}
+
+/** Resolve the active tee object (for rating/slope/totals display). */
+function getActiveTee(course: CourseData, selectedTeeName?: string) {
+  if (!selectedTeeName || !course.tees) return null;
+  return course.tees.find(t => t.name === selectedTeeName) || null;
+}
+
 // --- Course info header ---
 
-function CourseHeader({ course, currentHole, totalHoles }: { course: CourseData; currentHole: number; totalHoles: number }) {
+function CourseHeader({
+  course,
+  currentHole,
+  totalHoles,
+  selectedTeeName,
+  onSelectTee,
+}: {
+  course: CourseData;
+  currentHole: number;
+  totalHoles: number;
+  selectedTeeName?: string;
+  onSelectTee?: (name: string) => void;
+}) {
+  const activeTee = getActiveTee(course, selectedTeeName);
+  const rating = activeTee?.courseRating ?? course.courseRating;
+  const slope = activeTee?.slopeRating ?? course.slopeRating;
+
   return (
-    <div className="bg-sky-50 px-3 py-2">
+    <div className="bg-sky-50 px-3 py-2 space-y-1">
       <div className="flex items-center justify-between">
         <span className="text-xs sm:text-sm text-green-700 font-medium truncate max-w-[60%]">{course.name}</span>
         <span className="text-xs text-gray-500">Hole {currentHole}/{totalHoles}</span>
       </div>
-      {(course.courseRating || course.slopeRating) && (
-        <div className="flex gap-3 mt-0.5">
-          {course.courseRating && (
-            <span className="text-[10px] text-gray-500">Rating: {course.courseRating}</span>
-          )}
-          {course.slopeRating && (
-            <span className="text-[10px] text-gray-500">Slope: {course.slopeRating}</span>
-          )}
+      {(course.tees && course.tees.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[10px] text-gray-400 mr-1">Tee:</span>
+          {course.tees.map(tee => {
+            const isActive = tee.name === selectedTeeName;
+            return (
+              <button
+                key={tee.name}
+                onClick={() => onSelectTee?.(tee.name)}
+                className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                  isActive
+                    ? 'bg-green-600 text-white border-green-700'
+                    : 'bg-white text-gray-600 border-gray-300 hover:border-green-500'
+                }`}
+                title={tee.totalYards ? `${tee.totalYards} yds${tee.courseRating ? ` · R ${tee.courseRating}` : ''}${tee.slopeRating ? ` / S ${tee.slopeRating}` : ''}` : undefined}
+              >
+                {tee.name}{tee.totalYards ? ` · ${tee.totalYards}` : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {(rating || slope) && (
+        <div className="flex gap-3">
+          {rating && <span className="text-[10px] text-gray-500">Rating: {rating}</span>}
+          {slope && <span className="text-[10px] text-gray-500">Slope: {slope}</span>}
         </div>
       )}
     </div>
@@ -167,33 +220,40 @@ function NoHoleData({ course, currentHole }: { course: CourseData; currentHole: 
 
 // --- Portrait: 3 holes (prev 2 + current) ---
 
-function PortraitScorecard({ course, currentHole, players, onHoleTap, onScoreChange }: ScorecardProps) {
+function PortraitScorecard({ course, currentHole, players, onHoleTap, onScoreChange, selectedTeeName, onSelectTee }: ScorecardProps) {
+  const allHoles = useMemo(() => getActiveHoles(course, selectedTeeName), [course, selectedTeeName]);
+
   const visibleHoles = useMemo(() => {
     const holes: HoleData[] = [];
-    for (let i = Math.max(1, currentHole - 2); i <= Math.min(currentHole, course.holes.length); i++) {
-      const h = course.holes.find(h => h.holeNumber === i);
+    for (let i = Math.max(1, currentHole - 2); i <= Math.min(currentHole, allHoles.length); i++) {
+      const h = allHoles.find(h => h.holeNumber === i);
       if (h) holes.push(h);
     }
     // If we're on hole 1 or 2, pad so we always show up to 3 holes
-    if (holes.length < 3 && currentHole < course.holes.length) {
-      for (let i = currentHole + 1; holes.length < 3 && i <= course.holes.length; i++) {
-        const h = course.holes.find(h => h.holeNumber === i);
+    if (holes.length < 3 && currentHole < allHoles.length) {
+      for (let i = currentHole + 1; holes.length < 3 && i <= allHoles.length; i++) {
+        const h = allHoles.find(h => h.holeNumber === i);
         if (h) holes.push(h);
       }
     }
     return holes;
-  }, [course, currentHole]);
+  }, [allHoles, currentHole]);
 
   if (visibleHoles.length === 0) {
     return <NoHoleData course={course} currentHole={currentHole} />;
   }
 
-  const allHoles = course.holes;
   const totalPar = sumPar(allHoles);
 
   return (
     <div className="w-full bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <CourseHeader course={course} currentHole={currentHole} totalHoles={allHoles.length} />
+      <CourseHeader
+        course={course}
+        currentHole={currentHole}
+        totalHoles={allHoles.length}
+        selectedTeeName={selectedTeeName}
+        onSelectTee={onSelectTee}
+      />
 
       <div className="overflow-x-auto">
         <table className="w-full text-center text-xs">
@@ -298,22 +358,26 @@ function PortraitScorecard({ course, currentHole, players, onHoleTap, onScoreCha
 
 // --- Landscape: 9 holes, swipeable front/back ---
 
-function LandscapeScorecard({ course, currentHole, players, onHoleTap, onScoreChange }: ScorecardProps) {
+function LandscapeScorecard({ course, currentHole, players, onHoleTap, onScoreChange, selectedTeeName, onSelectTee }: ScorecardProps) {
   const [showingNine, setShowingNine] = useState<'front' | 'back'>(currentHole <= 9 ? 'front' : 'back');
   const touchStartX = useRef(0);
+
+  const allHoles = useMemo(() => getActiveHoles(course, selectedTeeName), [course, selectedTeeName]);
 
   const nineHoles = useMemo(() => {
     const start = showingNine === 'front' ? 1 : 10;
     const end = showingNine === 'front' ? 9 : 18;
-    return course.holes.filter(h => h.holeNumber >= start && h.holeNumber <= end);
-  }, [course, showingNine]);
+    return allHoles.filter(h => h.holeNumber >= start && h.holeNumber <= end);
+  }, [allHoles, showingNine]);
 
-  if (course.holes.length === 0) {
+  if (allHoles.length === 0) {
     return <NoHoleData course={course} currentHole={currentHole} />;
   }
 
-  const has18 = course.holes.length > 9;
-  const allHoles = course.holes;
+  const has18 = allHoles.length > 9;
+  const activeTee = getActiveTee(course, selectedTeeName);
+  const rating = activeTee?.courseRating ?? course.courseRating;
+  const slope = activeTee?.slopeRating ?? course.slopeRating;
 
   const handleTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
   const handleTouchEnd = (e: React.TouchEvent) => {
@@ -330,15 +394,34 @@ function LandscapeScorecard({ course, currentHole, players, onHoleTap, onScoreCh
       onTouchEnd={handleTouchEnd}
     >
       {/* Header */}
-      <div className="bg-sky-50 px-3 py-1.5 flex items-center justify-between">
-        <div>
-          <span className="text-xs text-green-700 font-medium truncate">{course.name}</span>
-          {(course.courseRating || course.slopeRating) && (
-            <span className="text-[10px] text-gray-500 ml-2">
-              {course.courseRating && `R: ${course.courseRating}`}
-              {course.courseRating && course.slopeRating && ' / '}
-              {course.slopeRating && `S: ${course.slopeRating}`}
-            </span>
+      <div className="bg-sky-50 px-3 py-1.5 flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-green-700 font-medium truncate">{course.name}</span>
+            {(rating || slope) && (
+              <span className="text-[10px] text-gray-500">
+                {rating && `R: ${rating}`}
+                {rating && slope && ' / '}
+                {slope && `S: ${slope}`}
+              </span>
+            )}
+          </div>
+          {course.tees && course.tees.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 mt-0.5">
+              {course.tees.map(tee => (
+                <button
+                  key={tee.name}
+                  onClick={() => onSelectTee?.(tee.name)}
+                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                    tee.name === selectedTeeName
+                      ? 'bg-green-600 text-white border-green-700'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-green-500'
+                  }`}
+                >
+                  {tee.name}{tee.totalYards ? ` · ${tee.totalYards}` : ''}
+                </button>
+              ))}
+            </div>
           )}
         </div>
         {has18 && (

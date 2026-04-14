@@ -10,7 +10,7 @@
 //   Detail:  GET /v1/courses/{id}
 //   Auth:    Authorization: Key {apiKey}
 
-import { CourseData, HoleData } from '@/lib/types';
+import { CourseData, HoleData, TeeBoxData } from '@/lib/types';
 
 const BASE_URL = 'https://api.golfcourseapi.com/v1';
 
@@ -97,20 +97,45 @@ function unwrapCourse(raw: unknown): APICourseDetail {
 }
 
 /**
+ * Flatten the API tees object/array into our TeeBoxData[] shape,
+ * preserving order and tagging male/female where the source shape
+ * provides it.
+ */
+function flattenTees(tees?: APICourseDetail['tees'] | APITeeBox[]): { sex?: 'male' | 'female'; t: APITeeBox }[] {
+  if (!tees) return [];
+  if (Array.isArray(tees)) return tees.map(t => ({ t }));
+  const out: { sex?: 'male' | 'female'; t: APITeeBox }[] = [];
+  for (const t of tees.male || []) out.push({ sex: 'male', t });
+  for (const t of tees.female || []) out.push({ sex: 'female', t });
+  return out;
+}
+
+/**
  * Pick the best tee box from the API response.
  * Handles both the documented shape ({ male: [], female: [] }) and
  * variants where `tees` is a flat array of tee boxes.
  */
 function pickBestTeeBox(tees?: APICourseDetail['tees'] | APITeeBox[]): APITeeBox | null {
-  if (!tees) return null;
-
-  // Flat array fallback (some responses return tees as a plain array)
-  const candidates: APITeeBox[] = Array.isArray(tees)
-    ? tees
-    : [...(tees.male || []), ...(tees.female || [])];
-
-  // Prefer a tee box that actually has hole data
+  const candidates = flattenTees(tees).map(c => c.t);
   return candidates.find(t => t.holes && t.holes.length > 0) || candidates[0] || null;
+}
+
+/**
+ * Convert a single API tee box (with its holes) into TeeBoxData.
+ * Generates a fallback name when the API doesn't supply one.
+ */
+function toTeeBoxData(api: APITeeBox, sex: 'male' | 'female' | undefined, fallbackIdx: number): TeeBoxData {
+  const name = api.tee_name?.trim() || (sex === 'female' ? `Red ${fallbackIdx + 1}` : `Tee ${fallbackIdx + 1}`);
+  return {
+    name,
+    sex,
+    totalYards: api.total_yards,
+    parTotal: api.par_total,
+    courseRating: api.course_rating,
+    slopeRating: api.slope_rating,
+    bogeyRating: api.bogey_rating,
+    holes: api.holes ? normalizeHoles(api.holes) : [],
+  };
 }
 
 /**
@@ -198,9 +223,14 @@ export async function getCourseDetails(courseId: string): Promise<CourseData> {
   const raw = await response.json();
   const course = unwrapCourse(raw);
 
-  // Pick the best tee box and extract hole data
+  // Pick the best tee box (used as the default/active for the scorecard)
   const teeBox = pickBestTeeBox(course.tees);
   const holes = teeBox?.holes ? normalizeHoles(teeBox.holes) : [];
+
+  // Build the full set of tees so the UI can let the user switch boxes.
+  const allTees: TeeBoxData[] = flattenTees(course.tees)
+    .map(({ sex, t }, idx) => toTeeBoxData(t, sex, idx))
+    .filter(t => t.holes.length > 0);
 
   // One-time visibility in Netlify logs when detail lookups come back empty
   if (!course.course_name && !course.club_name) {
@@ -224,7 +254,10 @@ export async function getCourseDetails(courseId: string): Promise<CourseData> {
     city: course.location?.city,
     state: course.location?.state,
     country: course.location?.country,
+    lat: course.location?.latitude,
+    lon: course.location?.longitude,
     holes,
+    tees: allTees,
     courseRating: teeBox?.course_rating,
     slopeRating: teeBox?.slope_rating,
   };

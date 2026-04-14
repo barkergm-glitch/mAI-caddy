@@ -61,6 +61,8 @@ interface UseVoiceOptions {
   handsFree?: boolean;
   /** Override or extend the wake-word list. Matched case-insensitively. */
   wakeWords?: string[];
+  /** TTS playback rate. Default 0.95. Lower (e.g. 0.85) is clearer outdoors. */
+  ttsRate?: number;
 }
 
 interface UseVoiceReturn {
@@ -130,7 +132,10 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
     lang = 'en-US',
     handsFree = false,
     wakeWords = DEFAULT_WAKE_WORDS,
+    ttsRate = 0.95,
   } = options;
+  const ttsRateRef = useRef(ttsRate);
+  useEffect(() => { ttsRateRef.current = ttsRate; }, [ttsRate]);
 
   const [status, setStatus] = useState<VoiceStatus>('idle');
   const [transcript, setTranscript] = useState('');
@@ -420,7 +425,7 @@ export function useVoice(options: UseVoiceOptions = {}): UseVoiceReturn {
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
-      utterance.rate = 0.95; // Slightly slower — easier to understand on course
+      utterance.rate = ttsRateRef.current;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
 
